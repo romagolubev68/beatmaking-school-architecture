@@ -1,0 +1,51 @@
+<!DOCTYPE html>
+<html lang="ru">
+<head>
+    <meta charset="UTF-8">
+    <title>Регистрация - BeatMaster</title>
+    <style>
+        body { font-family: sans-serif; background: #1a1a1a; color: white; display: flex; justify-content: center; padding-top: 50px; }
+        .auth-form { background: #2d2d2d; padding: 20px; border-radius: 8px; width: 300px; }
+        input { width: 90%; margin: 10px 0; padding: 10px; border-radius: 4px; border: none; }
+        button { width: 100%; padding: 10px; background: #28a745; color: white; border: none; border-radius: 4px; cursor: pointer; }
+        a { color: #aaa; text-decoration: none; font-size: 12px; display: block; margin-top: 10px; text-align: center; }
+    </style>
+</head>
+<body>
+    <div class="auth-form">
+        <h2>Регистрация</h2>
+        <input type="text" id="name" placeholder="Ваше имя">
+        <input type="email" id="email" placeholder="Email">
+        <input type="password" id="password" placeholder="Пароль">
+        <button onclick="register()">Создать аккаунт</button>
+        <a href="/auth/login">Уже есть аккаунт? Войти</a>
+        <p id="status"></p>
+    </div>
+
+    <script>
+        async function register() {
+            const name = document.getElementById('name').value;
+            const email = document.getElementById('email').value;
+            const password = document.getElementById('password').value;
+            const status = document.getElementById('status');
+
+            const response = await fetch('/api/auth/register', {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({ name, email, password })
+            });
+
+            const data = await response.json();
+
+            if (response.ok) {
+                status.innerText = "Регистрация успешна! Переходим ко входу...";
+                status.style.color = "lightgreen";
+                setTimeout(() => window.location.href = '/auth/login', 2000);
+            } else {
+                status.innerText = data.message;
+                status.style.color = "red";
+            }
+        }
+    </script>
+</body>
+</html>
