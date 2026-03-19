@@ -1,0 +1,132 @@
+<!DOCTYPE html>
+<html lang="ru">
+<head>
+    <meta charset="UTF-8">
+    <title>Личный кабинет - BeatMaster</title>
+    <style>
+        body { font-family: 'Segoe UI', sans-serif; background: #121212; color: white; padding: 40px; }
+        .container { max-width: 700px; margin: 0 auto; background: #1e1e1e; padding: 30px; border-radius: 12px; box-shadow: 0 4px 15px rgba(0,0,0,0.5); }
+        input { width: 45%; padding: 10px; margin: 5px; border-radius: 5px; border: 1px solid #333; background: #2d2d2d; color: white; }
+        button { padding: 10px 20px; border-radius: 5px; border: none; cursor: pointer; font-weight: bold; }
+        .btn-add { background: #28a745; color: white; width: 93%; margin: 10px 5px; }
+        .btn-logout { background: #dc3545; color: white; margin-top: 20px; }
+        .beat-item { background: #2d2d2d; padding: 15px; margin: 10px 0; border-radius: 8px; display: flex; justify-content: space-between; align-items: center; border-left: 4px solid #007bff; }
+        .btn-delete { background: #bd2130; color: white; font-size: 12px; }
+    </style>
+</head>
+<body>
+    <div class="container">
+        <h1>Панель продюсера</h1>
+        <p>Добро пожаловать, <strong id="userName">...</strong> (<span id="userEmail"></span>)</p>
+        
+        <hr style="border: 0.5px solid #333; margin: 20px 0;">
+
+        <h3>Добавить новый бит в магазин:</h3>
+        <input type="text" id="btitle" placeholder="Название бита (н-р: Dark Trap)">
+        <input type="number" id="bprice" placeholder="Цена ($)">
+        <button class="btn-add" onclick="addBeat()">Опубликовать бит</button>
+
+        <h3 style="margin-top: 30px;">Твои активные биты:</h3>
+        <div id="beatsList">
+            </div>
+
+        <button class="btn-logout" onclick="logout()">Выйти из аккаунта</button>
+    </div>
+
+    <script>
+        // 1. ПРОВЕРКА АВТОРИЗАЦИИ
+        async function checkAuth() {
+            const token = localStorage.getItem('token');
+            if (!token) {
+                window.location.href = '/index.html';
+                return;
+            }
+
+            const response = await fetch('/api/auth/me', {
+                headers: { 'Authorization': 'Bearer ' + token }
+            });
+
+            if (response.ok) {
+                const user = await response.json();
+                document.getElementById('userName').innerText = user.name;
+                document.getElementById('userEmail').innerText = user.email;
+                loadBeats(); // Если авторизован — загружаем список битов
+            } else {
+                logout();
+            }
+        }
+
+        // 2. ЗАГРУЗКА СПИСКА БИТОВ (READ)
+        async function loadBeats() {
+            const response = await fetch('/api/beats');
+            const beats = await response.json();
+            const list = document.getElementById('beatsList');
+            list.innerHTML = ''; 
+
+            if (beats.length === 0) {
+                list.innerHTML = '<p style="color: #666;">Пока ничего не добавлено...</p>';
+                return;
+            }
+
+            beats.forEach(beat => {
+                list.innerHTML += `
+                    <div class="beat-item">
+                        <div>
+                            <strong>${beat.title}</strong> — <span style="color: #28a745;">${beat.price}$</span>
+                        </div>
+                        <button class="btn-delete" onclick="deleteBeat(${beat.id})">Удалить</button>
+                    </div>
+                `;
+            });
+        }
+
+        // 3. ДОБАВЛЕНИЕ БИТА (CREATE)
+        async function addBeat() {
+            const title = document.getElementById('btitle').value;
+            const price = document.getElementById('bprice').value;
+            const token = localStorage.getItem('token');
+
+            if (!title || !price) return alert("Заполни поля!");
+
+            const response = await fetch('/api/beats', {
+                method: 'POST',
+                headers: { 
+                    'Content-Type': 'application/json',
+                    'Authorization': 'Bearer ' + token
+                },
+                body: JSON.stringify({ title, price, genre: 'Hip-Hop' })
+            });
+
+            if (response.ok) {
+                document.getElementById('btitle').value = '';
+                document.getElementById('bprice').value = '';
+                loadBeats(); // Обновляем список сразу
+            }
+        }
+
+        // 4. УДАЛЕНИЕ БИТА (DELETE)
+        async function deleteBeat(id) {
+            if (!confirm("Удалить этот бит?")) return;
+            
+            const token = localStorage.getItem('token');
+            const response = await fetch(`/api/beats/${id}`, {
+                method: 'DELETE',
+                headers: { 'Authorization': 'Bearer ' + token }
+            });
+
+            if (response.ok) {
+                loadBeats(); // Обновляем список после удаления
+            } else {
+                alert("Ошибка при удалении (возможно, это не ваш бит)");
+            }
+        }
+
+        function logout() {
+            localStorage.removeItem('token');
+            window.location.href = '/index.html';
+        }
+
+        checkAuth();
+    </script>
+</body>
+</html>
