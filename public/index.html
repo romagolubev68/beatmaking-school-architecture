@@ -51,16 +51,16 @@
       `,
       '/profile': async () => {
         if (!isAuthenticated()) {
-          render('/auth/login');
-          return '<p>Переадресация на страницу входа...</p>';
+          await render('/auth/login');
+          return null;
         }
 
         try {
           const resp = await fetch(`${API_URL}/me`, { headers: { ...getAuthHeaders(), 'Content-Type': 'application/json' } });
           if (!resp.ok) {
             localStorage.removeItem('token');
-            render('/auth/login');
-            return '<p>Ошибка авторизации, перенаправление...</p>';
+            await render('/auth/login');
+            return null;
           }
 
           const user = await resp.json();
@@ -84,25 +84,40 @@
         } catch (error) {
           console.error(error);
           localStorage.removeItem('token');
-          render('/auth/login');
-          return '<p>Ошибка сервера, выполняется переход на вход...</p>';
+          await render('/auth/login');
+          return null;
         }
       }
     };
 
     async function render(path) {
-      history.pushState({}, '', path);
+      if (path === '/profile' && !isAuthenticated()) {
+        history.replaceState({}, '', '/auth/login');
+        path = '/auth/login';
+      } else {
+        history.pushState({}, '', path);
+      }
       const renderer = pages[path];
       if (!renderer) {
         appEl.innerHTML = '<h2>404</h2><p>Страница не найдена</p>';
         return;
       }
 
+      let content;
       if (typeof renderer === 'function') {
-        appEl.innerHTML = await renderer();
+        content = await renderer();
       } else {
-        appEl.innerHTML = renderer;
+        content = renderer;
       }
+
+      if (content === null) {
+        document.querySelectorAll('a[data-link]').forEach(a => {
+          a.classList.toggle('active', a.getAttribute('href') === location.pathname);
+        });
+        return;
+      }
+
+      appEl.innerHTML = content;
 
       document.querySelectorAll('a[data-link]').forEach(a => {
         a.classList.toggle('active', a.getAttribute('href') === path);
