@@ -1,0 +1,286 @@
+<!DOCTYPE html>
+<html lang="ru">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>BeatMaster Academy SPA</title>
+  <style>body{font-family:Arial,Helvetica,sans-serif;margin:0;padding:20px;background:#f4f4f4;}nav{margin-bottom:16px;}a{margin-right:12px;text-decoration:none;color:#2a6af8;}a.active{font-weight:bold;color:#0a47bb;}#app{background:#fff;border:1px solid #ddd;padding:16px;border-radius:8px;min-height:280px;}</style>
+</head>
+<body>
+  <h1>BeatMaster Academy</h1>
+  <nav>
+    <a data-link href="/auth/login">Вход</a>
+    <a data-link href="/auth/register">Регистрация</a>
+    <a data-link href="/profile">Профиль</a>
+  </nav>
+  <div id="app"></div>
+
+  <script>
+    const appEl = document.getElementById('app');
+    const API_URL = '/api/auth';
+
+    function isAuthenticated() {
+      return !!localStorage.getItem('token');
+    }
+
+    function getAuthHeaders() {
+      const token = localStorage.getItem('token');
+      return token ? { 'Authorization': `Bearer ${token}` } : {};
+    }
+
+    const pages = {
+      '/': () => '<h2>Главная</h2><p>Добро пожаловать в приложение SPA (без перезагрузки).</p>',
+      '/auth/login': () => `
+        <h2>Вход</h2>
+        <form id="loginForm">
+          <label>email:<br><input name="email" type="email" required></label><br><br>
+          <label>пароль:<br><input name="password" type="password" required></label><br><br>
+          <button type="submit">Войти</button>
+        </form>
+        <p><small>Нет аккаунта? <a data-link href="/auth/register">Зарегистрируйтесь</a>.</small></p>
+      `,
+      '/auth/register': () => `
+        <h2>Регистрация</h2>
+        <form id="registerForm">
+          <label>имя:<br><input name="name" required></label><br><br>
+          <label>email:<br><input name="email" type="email" required></label><br><br>
+          <label>пароль:<br><input name="password" type="password" required></label><br><br>
+          <button type="submit">Зарегистрироваться</button>
+        </form>
+        <p><small>Уже есть аккаунт? <a data-link href="/auth/login">Войти</a>.</small></p>
+      `,
+      '/profile': async () => {
+        if (!isAuthenticated()) {
+          render('/auth/login');
+          return '<p>Переадресация на страницу входа...</p>';
+        }
+
+        try {
+          const resp = await fetch(`${API_URL}/me`, { headers: { ...getAuthHeaders(), 'Content-Type': 'application/json' } });
+          if (!resp.ok) {
+            localStorage.removeItem('token');
+            render('/auth/login');
+            return '<p>Ошибка авторизации, перенаправление...</p>';
+          }
+
+          const user = await resp.json();
+          return `
+            <h2>Профиль</h2>
+            <p><strong>Имя:</strong> ${user.name}</p>
+            <p><strong>Email:</strong> ${user.email}</p>
+            <p><strong>ID:</strong> ${user.id}</p>
+            <button id="logoutBtn">Выйти</button>
+
+            <h3>Мои биты</h3>
+            <form id="addBeatForm">
+              <label>Название битa:<br><input name="title" required></label><br><br>
+              <label>Цена:<br><input name="price" type="number" min="0" step="0.01" required></label><br><br>
+              <label>Жанр:<br><input name="genre" required></label><br><br>
+              <button type="submit">Добавить бит</button>
+            </form>
+
+            <div id="beatsList"><em>Загрузка битов...</em></div>
+          `;
+        } catch (error) {
+          console.error(error);
+          localStorage.removeItem('token');
+          render('/auth/login');
+          return '<p>Ошибка сервера, выполняется переход на вход...</p>';
+        }
+      }
+    };
+
+    async function render(path) {
+      history.pushState({}, '', path);
+      const renderer = pages[path];
+      if (!renderer) {
+        appEl.innerHTML = '<h2>404</h2><p>Страница не найдена</p>';
+        return;
+      }
+
+      if (typeof renderer === 'function') {
+        appEl.innerHTML = await renderer();
+      } else {
+        appEl.innerHTML = renderer;
+      }
+
+      document.querySelectorAll('a[data-link]').forEach(a => {
+        a.classList.toggle('active', a.getAttribute('href') === path);
+      });
+
+      attachForms();
+    }
+
+    async function loadBeats() {
+      const listEl = document.getElementById('beatsList');
+      if (!listEl) return;
+
+      try {
+        const resp = await fetch('/api/beats/my', { headers: getAuthHeaders() });
+        if (!resp.ok) {
+          if (resp.status === 401 || resp.status === 403) {
+            render('/auth/login');
+            return;
+          }
+          listEl.innerHTML = '<p>Не удалось загрузить биты</p>';
+          return;
+        }
+        const beats = await resp.json();
+        if (!beats.length) {
+          listEl.innerHTML = '<p>Пока нет ваших битов.</p>';
+          return;
+        }
+        listEl.innerHTML = `<ul>${beats.map(b => `<li><strong>${b.title}</strong> ${b.genre} ${b.price} <button data-delete-id="${b.id}">Удалить</button></li>`).join('')}</ul>`;
+      } catch (e) {
+        listEl.innerHTML = '<p>Ошибка при загрузке битов.</p>';
+      }
+    }
+
+    async function attachForms() {
+      const lf = document.getElementById('loginForm');
+      if (lf) {
+        lf.addEventListener('submit', async (e) => {
+          e.preventDefault();
+          const formData = new FormData(lf);
+          const email = formData.get('email');
+          const password = formData.get('password');
+
+          try {
+            const resp = await fetch(`${API_URL}/login`, {
+              method: 'POST',
+              headers: { 'Content-Type': 'application/json' },
+              body: JSON.stringify({ email, password })
+            });
+            const data = await resp.json();
+            if (!resp.ok) {
+              alert(data.message || 'Ошибка входа');
+              return;
+            }
+
+            localStorage.setItem('token', data.token);
+            render('/profile');
+          } catch (error) {
+            alert('Ошибка сети при входе');
+            console.error(error);
+          }
+        });
+      }
+
+      const rf = document.getElementById('registerForm');
+      if (rf) {
+        rf.addEventListener('submit', async (e) => {
+          e.preventDefault();
+          const formData = new FormData(rf);
+          const name = formData.get('name');
+          const email = formData.get('email');
+          const password = formData.get('password');
+
+          try {
+            const resp = await fetch(`${API_URL}/register`, {
+              method: 'POST',
+              headers: { 'Content-Type': 'application/json' },
+              body: JSON.stringify({ name, email, password })
+            });
+            const data = await resp.json();
+            if (!resp.ok) {
+              alert(data.message || 'Ошибка регистрации');
+              return;
+            }
+
+            alert('Регистрация успешна, теперь войдите');
+            render('/auth/login');
+          } catch (error) {
+            alert('Ошибка сети при регистрации');
+            console.error(error);
+          }
+        });
+      }
+
+      const addBeatForm = document.getElementById('addBeatForm');
+      if (addBeatForm) {
+        addBeatForm.addEventListener('submit', async (e) => {
+          e.preventDefault();
+          const formData = new FormData(addBeatForm);
+          const title = formData.get('title');
+          const price = formData.get('price');
+          const genre = formData.get('genre');
+
+          try {
+            const resp = await fetch('/api/beats', {
+              method: 'POST',
+              headers: { ...getAuthHeaders(), 'Content-Type': 'application/json' },
+              body: JSON.stringify({ title, price, genre })
+            });
+            const data = await resp.json();
+            if (!resp.ok) {
+              alert(data.message || 'Ошибка добавления бита');
+              return;
+            }
+            alert('Бит добавлен');
+            addBeatForm.reset();
+            await loadBeats();
+          } catch (error) {
+            alert('Ошибка сети при добавлении бита');
+            console.error(error);
+          }
+        });
+      }
+
+      const logoutBtn = document.getElementById('logoutBtn');
+      if (logoutBtn) {
+        logoutBtn.addEventListener('click', () => {
+          localStorage.removeItem('token');
+          render('/auth/login');
+        });
+      }
+
+      const beatsList = document.getElementById('beatsList');
+      if (beatsList) {
+        beatsList.addEventListener('click', async (e) => {
+          const deleteId = e.target.dataset.deleteId;
+          if (!deleteId) return;
+
+          if (!confirm('Удалить бит?')) return;
+
+          try {
+            const resp = await fetch(`/api/beats/${deleteId}`, {
+              method: 'DELETE',
+              headers: getAuthHeaders()
+            });
+            const data = await resp.json();
+            if (!resp.ok) {
+              alert(data.message || 'Ошибка удаления');
+              return;
+            }
+            alert('Бит удален');
+            await loadBeats();
+          } catch (error) {
+            alert('Ошибка сети при удалении');
+            console.error(error);
+          }
+        });
+      }
+
+      if (location.pathname === '/profile') {
+        await loadBeats();
+      }
+    }
+
+    document.body.addEventListener('click', (e) => {
+      const link = e.target.closest('a[data-link]');
+      if (!link) return;
+      e.preventDefault();
+      render(link.getAttribute('href'));
+    });
+
+    window.addEventListener('popstate', () => render(location.pathname));
+
+    // При старте проверяем, если открыли /profile и не авторизованы - редирект
+    if (location.pathname === '/profile' && !isAuthenticated()) {
+      render('/auth/login');
+    } else {
+      render(location.pathname === '/' ? '/' : location.pathname);
+    }
+  </script>
+</body>
+</html>

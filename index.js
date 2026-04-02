@@ -22,38 +22,31 @@ app.use('/api/beats', beatsRoutes);
 // Настраиваем порт (5000 или тот, что в .env)
 const PORT = process.env.PORT || 5000;
 
-// Это "эндпоинт" (маршрут) для проверки, что сервер работает
+// Это "эндпоинт" (маршрут) для SPA: отдаём один HTML, дальше роутит фронтенд
 app.get('/', (req, res) => {
-    res.json({ message: "Сервер BeatMaster Academy работает!" });
+    res.sendFile(path.join(__dirname, 'public', 'index.html'));
 });
 
 // Маршрут получения профиля (доступен только с токеном)
 app.get('/api/auth/me', authMiddleware, async (req, res) => {
     try {
-        const [users] = await db.query("SELECT id, name, email FROM Users WHERE id = ?", [req.user.userId]);
+        const [users] = await db.query("SELECT id, name, email, createdAt FROM Users WHERE id = ?", [req.user.userId]);
         res.json(users[0]);
     } catch (e) {
         res.status(500).json({ message: "Ошибка при получении профиля" });
     }
 });
 
+// Далее: для всех не-API маршрутов отдаём index.html (SPA)
+app.use((req, res, next) => {
+    if (req.path.startsWith('/api')) {
+        return res.status(404).json({ message: 'API route not found' });
+    }
+    res.sendFile(path.join(__dirname, 'public', 'index.html'));
+});
+
 // Запускаем прослушивание порта
 app.listen(PORT, () => {
     console.log(`>>> Сервер запущен на порту ${PORT}`);
     console.log(`>>> Ссылка: http://localhost:${PORT}`);
-});
-
-// Роут для страницы входа
-app.get('/auth/login', (req, res) => {
-    res.sendFile(path.join(__dirname, 'public', 'login.html'));
-});
-
-// Роут для страницы регистрации
-app.get('/auth/register', (req, res) => {
-    res.sendFile(path.join(__dirname, 'public', 'register.html'));
-});
-
-// Роут для страницы профиля (чтобы работала ссылка /profile)
-app.get('/profile', (req, res) => {
-    res.sendFile(path.join(__dirname, 'public', 'profile.html'));
 });
