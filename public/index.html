@@ -1,4 +1,4 @@
-<!DOCTYPE html>
+  <!DOCTYPE html>
 <html lang="ru">
 <head>
   <meta charset="UTF-8" />
@@ -9,13 +9,14 @@
 <body>
   <h1>BeatMaster Academy</h1>
   <nav>
-    <a data-link href="/auth/login">Вход</a>
-    <a data-link href="/auth/register">Регистрация</a>
+    <a id="navLogin" data-link href="/auth/login">Вход</a>
+    <a id="navRegister" data-link href="/auth/register">Регистрация</a>
     <a data-link href="/profile">Профиль</a>
+    <button id="navLogoutBtn" type="button" style="display:none;">Выйти</button>
   </nav>
   <div id="app"></div>
 
-  <script>
+  <script src="app.js"></script><!--
     const appEl = document.getElementById('app');
     const API_URL = '/api/auth';
 
@@ -29,7 +30,7 @@
     }
 
     const pages = {
-      '/': () => '<h2>Главная</h2><p>Добро пожаловать в приложение SPA (без перезагрузки).</p>',
+      '/': () => '<h2>Главная</h2><p>Добро пожаловать в приложение SPA</p>',
       '/auth/login': () => `
         <h2>Вход</h2>
         <form id="loginForm">
@@ -296,6 +297,6 @@
     } else {
       render(location.pathname === '/' ? '/' : location.pathname);
     }
-  </script>
+  -->
 </body>
 </html>
