@@ -43,7 +43,7 @@ function validateLoginPayload(payload = {}) {
     return null;
 }
 
-// 1. РЕГИСТРАЦИЯ: POST /api/auth/register
+// 1. РЕГИСТРАЦИЯ: POST /api/auth/register 
 router.post('/register', async (req, res) => {
     try {
         const validationError = validateRegisterPayload(req.body);
