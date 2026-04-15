@@ -7,3 +7,23 @@ CREATE TABLE IF NOT EXISTS Beats (
     createdAt DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
     CONSTRAINT fk_beats_user FOREIGN KEY (userId) REFERENCES Users(id) ON DELETE CASCADE
 );
+
+CREATE TABLE IF NOT EXISTS BeatLikes (
+    id INT AUTO_INCREMENT PRIMARY KEY,
+    beatId INT NOT NULL,
+    userId INT NOT NULL,
+    createdAt DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
+    UNIQUE KEY uniq_beat_like (beatId, userId),
+    CONSTRAINT fk_beat_likes_beat FOREIGN KEY (beatId) REFERENCES Beats(id) ON DELETE CASCADE,
+    CONSTRAINT fk_beat_likes_user FOREIGN KEY (userId) REFERENCES Users(id) ON DELETE CASCADE
+);
+
+CREATE TABLE IF NOT EXISTS BeatFavorites (
+    id INT AUTO_INCREMENT PRIMARY KEY,
+    beatId INT NOT NULL,
+    userId INT NOT NULL,
+    createdAt DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
+    UNIQUE KEY uniq_beat_favorite (beatId, userId),
+    CONSTRAINT fk_beat_favorites_beat FOREIGN KEY (beatId) REFERENCES Beats(id) ON DELETE CASCADE,
+    CONSTRAINT fk_beat_favorites_user FOREIGN KEY (userId) REFERENCES Users(id) ON DELETE CASCADE
+);
