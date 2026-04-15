@@ -19,6 +19,59 @@ app.use('/api/auth', authRoutes);     // Все маршруты из auth.js б
 
 app.use('/api/beats', beatsRoutes);
 
+app.get('/api/home/summary', async (req, res) => {
+    try {
+        const [popularRows] = await db.query(
+            `
+            SELECT
+                b.id,
+                b.title,
+                b.genre,
+                b.price,
+                u.name AS authorName,
+                COUNT(DISTINCT bl.id) AS likesCount
+            FROM Beats b
+            LEFT JOIN Users u ON u.id = b.userId
+            LEFT JOIN BeatLikes bl ON bl.beatId = b.id
+            GROUP BY b.id, b.title, b.genre, b.price, u.name
+            ORDER BY likesCount DESC, b.createdAt DESC
+            LIMIT 3
+            `
+        );
+
+        const [statsRows] = await db.query(
+            `
+            SELECT
+                (SELECT COUNT(*) FROM Users) AS usersCount,
+                (SELECT COUNT(*) FROM Beats) AS beatsCount,
+                (SELECT COUNT(*) FROM BeatFavorites) AS favoritesCount
+            `
+        );
+
+        res.json({
+            popular: popularRows,
+            stats: statsRows[0] || { usersCount: 0, beatsCount: 0, favoritesCount: 0 }
+        });
+    } catch (e) {
+        res.status(500).json({ message: "Ошибка загрузки главной страницы" });
+    }
+});
+
+app.get('/api/mentors', async (req, res) => {
+    try {
+        const [rows] = await db.query(
+            `
+            SELECT id, fullName, specialization, bio, portfolioUrl
+            FROM Mentors
+            ORDER BY id ASC
+            `
+        );
+        res.json(rows);
+    } catch (e) {
+        res.status(500).json({ message: "Ошибка загрузки наставников" });
+    }
+});
+
 // Настраиваем порт (5000 или тот, что в .env)
 const PORT = process.env.PORT || 5000;
 
