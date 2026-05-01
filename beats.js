@@ -177,6 +177,24 @@ router.post('/checkout/process', authMiddleware, async (req, res) => {
         await ensureCoursePurchasesTable();
         const userId = req.user.userId;
         const ids = Array.isArray(req.body?.ids) ? req.body.ids : [];
+        const payment = req.body?.payment || {};
+        const cardNumber = String(payment.cardNumber || '').replace(/\s+/g, '');
+        const cardHolder = String(payment.cardHolder || '').trim();
+        const expiry = String(payment.expiry || '').trim();
+        const cvv = String(payment.cvv || '').trim();
+
+        if (!/^\d{16}$/.test(cardNumber)) {
+            return res.status(400).json({ message: "Введите корректный номер карты (16 цифр)" });
+        }
+        if (cardHolder.length < 3) {
+            return res.status(400).json({ message: "Введите имя владельца карты" });
+        }
+        if (!/^\d{2}\/\d{2}$/.test(expiry)) {
+            return res.status(400).json({ message: "Введите срок действия в формате MM/YY" });
+        }
+        if (!/^\d{3}$/.test(cvv)) {
+            return res.status(400).json({ message: "Введите корректный CVV (3 цифры)" });
+        }
         const courseIds = [...new Set(
             ids
                 .map((value) => Number(value))

@@ -27,6 +27,13 @@ const state = {
   token: localStorage.getItem('token'), // токен авторизации
   user: null,
   flash: '',
+  checkoutNotice: null,
+  paymentForm: {
+    cardNumber: '',
+    cardHolder: '',
+    expiry: '',
+    cvv: ''
+  },
   courseFilters: {
     search: '',
     genre: '',
@@ -514,6 +521,7 @@ async function renderCheckout() {
   const total = data.reduce((acc, item) => acc + Number(item.price || 0), 0);
   appEl.innerHTML = `
     <h2>Оплата</h2>
+    ${state.checkoutNotice ? `<div class="${state.checkoutNotice.type === 'error' ? 'error' : 'success'}">${escapeHtml(state.checkoutNotice.text)}</div>` : ''}
     <p class="muted">Список выбранных курсов получен с сервера.</p>
     ${data.length ? `
       <ul>
@@ -521,8 +529,25 @@ async function renderCheckout() {
       </ul>
       <p><strong>Итого: ${total.toFixed(2)} ₽</strong></p>
     ` : '<p>Корзина пуста.</p>'}
-    <button id="checkoutSubmitBtn" class="btn primary" ${data.length ? '' : 'disabled'}>Оплатить курсы</button>
-    <div id="checkoutMessage"></div>
+    <form id="checkoutPaymentForm">
+      <div class="form-row">
+        <label>Номер карты
+          <input name="cardNumber" inputmode="numeric" maxlength="19" placeholder="0000 0000 0000 0000" value="${escapeHtml(state.paymentForm.cardNumber)}" required />
+        </label>
+        <label>Владелец карты
+          <input name="cardHolder" placeholder="IVAN IVANOV" value="${escapeHtml(state.paymentForm.cardHolder)}" required />
+        </label>
+      </div>
+      <div class="form-row">
+        <label>Срок действия
+          <input name="expiry" maxlength="5" placeholder="MM/YY" value="${escapeHtml(state.paymentForm.expiry)}" required />
+        </label>
+        <label>CVV
+          <input name="cvv" inputmode="numeric" maxlength="3" placeholder="123" value="${escapeHtml(state.paymentForm.cvv)}" required />
+        </label>
+      </div>
+      <button id="checkoutSubmitBtn" class="btn primary" type="submit" ${data.length ? '' : 'disabled'}>Оплатить курсы</button>
+    </form>
   `;
 }
 
@@ -794,7 +819,7 @@ async function handleCreateBeat(form) { // функция для добавле�
     body: JSON.stringify({ title, genre, price })
   });
   if (!ok) {
-    showError('profileFormError', data.message || 'Ошибка создания курса.');
+    showError('profileFormError', data.message || 'Ошибка создания контента.');
     return;
   }
   await render('/profile', true);
@@ -898,33 +923,67 @@ function attachHandlers(routeKey) {
     addToCheckoutBtn.addEventListener('click', () => {
       const id = Number(addToCheckoutBtn.dataset.id);
       if (!state.checkoutCart.includes(id)) state.checkoutCart.push(id);
+      state.checkoutNotice = null;
       setFlash('Курс добавлен в корзину оплаты.');
       render('/checkout', true);
     });
   }
 
-  const checkoutSubmitBtn = document.getElementById('checkoutSubmitBtn');
-  if (checkoutSubmitBtn) {
-    checkoutSubmitBtn.addEventListener('click', async () => {
+  const checkoutPaymentForm = document.getElementById('checkoutPaymentForm');
+  if (checkoutPaymentForm) {
+    checkoutPaymentForm.addEventListener('submit', async (event) => {
+      event.preventDefault();
+      const formData = new FormData(checkoutPaymentForm);
+      const cardNumberRaw = String(formData.get('cardNumber') || '');
+      const cardNumber = cardNumberRaw.replace(/[^\d]/g, '').slice(0, 16);
+      const cardHolder = String(formData.get('cardHolder') || '').trim();
+      const expiryRaw = String(formData.get('expiry') || '').replace(/[^\d]/g, '').slice(0, 4);
+      const expiry = expiryRaw.length >= 3 ? `${expiryRaw.slice(0, 2)}/${expiryRaw.slice(2)}` : expiryRaw;
+      const cvv = String(formData.get('cvv') || '').replace(/[^\d]/g, '').slice(0, 3);
+
+      state.paymentForm = { cardNumber, cardHolder, expiry, cvv };
+
+      if (cardNumber.length !== 16) {
+        state.checkoutNotice = { type: 'error', text: 'Введите корректный номер карты (16 цифр)' };
+        await render('/checkout', true);
+        return;
+      }
+      if (cardHolder.length < 3) {
+        state.checkoutNotice = { type: 'error', text: 'Введите имя владельца карты' };
+        await render('/checkout', true);
+        return;
+      }
+      if (!/^\d{2}\/\d{2}$/.test(expiry)) {
+        state.checkoutNotice = { type: 'error', text: 'Введите срок действия в формате MM/YY' };
+        await render('/checkout', true);
+        return;
+      }
+      if (cvv.length !== 3) {
+        state.checkoutNotice = { type: 'error', text: 'Введите корректный CVV (3 цифры)' };
+        await render('/checkout', true);
+        return;
+      }
+
       const { ok, data } = await apiFetch('/api/beats/checkout/process', {
         method: 'POST',
         headers: { ...getAuthHeaders(), 'Content-Type': 'application/json' },
-        body: JSON.stringify({ ids: state.checkoutCart })
+        body: JSON.stringify({
+          ids: state.checkoutCart,
+          payment: { cardNumber, cardHolder, expiry, cvv }
+        })
       });
-      const msg = document.getElementById('checkoutMessage');
       if (!ok) {
-        if (msg) msg.innerHTML = `<div class="error">${escapeHtml(data.message || 'Оплата не выполнена')}</div>`;
+        state.checkoutNotice = { type: 'error', text: data.message || 'Оплата не выполнена' };
+        await render('/checkout', true);
         return;
       }
       state.checkoutCart = [];
-      if (msg) {
-        msg.innerHTML = `
-          <div class="success">
-            ${escapeHtml(data.message || 'Оплата успешно выполнена')}. Куплено курсов: <strong>${Number(data.purchasedCount || 0)}</strong>.
-            Сумма: <strong>${Number(data.totalAmount || 0).toFixed(2)} ₽</strong>
-          </div>
-        `;
-      }
+      state.paymentForm = { cardNumber: '', cardHolder: '', expiry: '', cvv: '' };
+      state.checkoutNotice = {
+        type: 'success',
+        text: `${data.message || 'Оплата успешно выполнена'}. Куплено курсов: ${Number(data.purchasedCount || 0)}. Сумма: ${Number(data.totalAmount || 0).toFixed(2)} ₽`
+      };
+      await render('/checkout', true);
       await refreshHomeInPlace();
     });
   }
