@@ -2,8 +2,9 @@ const express = require('express');
 const router = express.Router();
 const db = require('./db');
 const authMiddleware = require('./middleware');
+const { broadcastDataChange } = require('./events');
 
-function validateBeatPayload(payload = {}) {
+function validateBeatPayload(payload = {}) { // Проверяем, что в запросе есть все нужные поля и они корректные
     const { title, price, genre } = payload;
 
     if (!title || !genre || price === undefined || price === null || price === '') {
@@ -26,14 +27,14 @@ function validateBeatPayload(payload = {}) {
     return null;
 }
 
-function normalizePagination(query = {}) {
+function normalizePagination(query = {}) { // пагинация (ограничиваем количество записей на странице)
     const page = Math.max(1, Number.parseInt(query.page, 10) || 1);
     const limit = Math.min(20, Math.max(1, Number.parseInt(query.limit, 10) || 6));
     const offset = (page - 1) * limit;
     return { page, limit, offset };
 }
 
-function buildSort(sort = '') {
+function buildSort(sort = '') { 
     switch (sort) {
         case 'title_asc':
             return 'b.title ASC';
@@ -49,7 +50,7 @@ function buildSort(sort = '') {
 }
 
 // 1. ПОЛУЧИТЬ КАТАЛОГ БИТОВ (публично, c поиском/фильтрами/сортировкой/пагинацией)
-router.get('/', async (req, res) => {
+router.get('/', async (req, res) => { // получаем биты из базы данных
     try {
         const { search = '', genre = '', minPrice = '', maxPrice = '', sort = 'newest' } = req.query;
         const { page, limit, offset } = normalizePagination(req.query);
@@ -74,10 +75,10 @@ router.get('/', async (req, res) => {
             params.push(Number(maxPrice) || 0);
         }
 
-        const whereSql = where.length ? `WHERE ${where.join(' AND ')}` : '';
+        const whereSql = where.length ? `WHERE ${where.join(' AND ')}` : ''; 
         const orderBy = buildSort(String(sort));
 
-        const [rows] = await db.query(
+        const [rows] = await db.query( 
             `
             SELECT
                 b.id,
@@ -99,7 +100,7 @@ router.get('/', async (req, res) => {
             [...params, limit, offset]
         );
 
-        const [countRows] = await db.query(
+        const [countRows] = await db.query( // получаем количество битов
             `
             SELECT COUNT(*) AS total
             FROM Beats b
@@ -108,14 +109,14 @@ router.get('/', async (req, res) => {
             params
         );
 
-        const total = countRows[0]?.total || 0;
+        const total = countRows[0]?.total || 0; 
         const totalPages = Math.max(1, Math.ceil(total / limit));
 
-        res.json({
+        res.json({ // возвращаем биты и пагинацию
             items: rows,
             pagination: { page, limit, total, totalPages }
         });
-    } catch (e) {
+    } catch (e) { 
         res.status(500).json({ message: "Ошибка при получении битов" });
     }
 });
@@ -164,30 +165,31 @@ router.get('/my', authMiddleware, async (req, res) => {
 router.post('/item/:id/like', authMiddleware, async (req, res) => {
     try {
         const beatId = Number(req.params.id);
-        const userId = req.user.userId;
+        const userId = req.user.userId; // получаем id пользователя из токена
         const [beats] = await db.query('SELECT id FROM Beats WHERE id = ?', [beatId]);
         if (!beats.length) {
             return res.status(404).json({ message: "Бит не найден" });
         }
 
-        const [existing] = await db.query(
+        const [existing] = await db.query( // проверяем, есть ли лайк на этот бит у этого пользователя
             'SELECT id FROM BeatLikes WHERE beatId = ? AND userId = ?',
             [beatId, userId]
         );
 
         let liked;
-        if (existing.length) {
+        if (existing.length) { // если лайк существует, то удаляем его
             await db.query('DELETE FROM BeatLikes WHERE beatId = ? AND userId = ?', [beatId, userId]);
             liked = false;
-        } else {
+        } else { // если лайк не существует, то добавляем его
             await db.query('INSERT INTO BeatLikes (beatId, userId) VALUES (?, ?)', [beatId, userId]);
-            liked = true;
+            liked = true; 
         }
 
-        const [countRows] = await db.query(
+        const [countRows] = await db.query( // получаем количество лайков на этот бит
             'SELECT COUNT(*) AS likesCount FROM BeatLikes WHERE beatId = ?',
             [beatId]
         );
+        broadcastDataChange('likes');
         res.json({ liked, likesCount: countRows[0]?.likesCount || 0 });
     } catch (e) {
         res.status(500).json({ message: "Ошибка при обновлении лайка" });
@@ -197,14 +199,14 @@ router.post('/item/:id/like', authMiddleware, async (req, res) => {
 // 1.3. ИЗБРАННОЕ / УДАЛЕНИЕ ИЗ ИЗБРАННОГО
 router.post('/item/:id/favorite', authMiddleware, async (req, res) => {
     try {
-        const beatId = Number(req.params.id);
-        const userId = req.user.userId;
-        const [beats] = await db.query('SELECT id FROM Beats WHERE id = ?', [beatId]);
+        const beatId = Number(req.params.id); 
+        const userId = req.user.userId; // получаем id пользователя из токена
+        const [beats] = await db.query('SELECT id FROM Beats WHERE id = ?', [beatId]); // проверяем, существует ли бит
         if (!beats.length) {
             return res.status(404).json({ message: "Бит не найден" });
         }
 
-        const [existing] = await db.query(
+        const [existing] = await db.query( // проверяем, есть ли избранное на этот бит у этого пользователя
             'SELECT id FROM BeatFavorites WHERE beatId = ? AND userId = ?',
             [beatId, userId]
         );
@@ -218,6 +220,7 @@ router.post('/item/:id/favorite', authMiddleware, async (req, res) => {
             favorite = true;
         }
 
+        broadcastDataChange('favorites');
         res.json({ favorite });
     } catch (e) {
         res.status(500).json({ message: "Ошибка при обновлении избранного" });
@@ -248,7 +251,7 @@ router.get('/dashboard/summary', authMiddleware, async (req, res) => {
             [userId, userId]
         );
 
-        res.json({
+        res.json({ // возвращаем биты и статистику
             items: rows,
             stats: {
                 totalItems: rows.length,
@@ -264,7 +267,7 @@ router.get('/dashboard/summary', authMiddleware, async (req, res) => {
 // 1.5. МОЕ ИЗБРАННОЕ (приватно)
 router.get('/favorites/list', authMiddleware, async (req, res) => {
     try {
-        const userId = req.user.userId;
+        const userId = req.user.userId; // получаем id пользователя из токена
         const [rows] = await db.query(
             `
             SELECT b.id, b.title, b.genre, b.price, b.createdAt
@@ -285,11 +288,11 @@ router.get('/favorites/list', authMiddleware, async (req, res) => {
 router.get('/item/:id', async (req, res) => {
     try {
         const beatId = Number(req.params.id);
-        if (!Number.isInteger(beatId) || beatId <= 0) {
+        if (!Number.isInteger(beatId) || beatId <= 0) { // проверяем, является ли id бита целым числом и больше 0
             return res.status(400).json({ message: "Некорректный id бита" });
         }
 
-        const [rows] = await db.query(
+        const [rows] = await db.query( // получаем бит по id
             `
             SELECT
                 b.id,
@@ -320,20 +323,48 @@ router.get('/item/:id', async (req, res) => {
     }
 });
 
+// 1.7. СОСТОЯНИЕ ЛАЙКА/ИЗБРАННОГО ДЛЯ ТЕКУЩЕГО ПОЛЬЗОВАТЕЛЯ
+router.get('/item/:id/state', authMiddleware, async (req, res) => {
+    try {
+        const beatId = Number(req.params.id);
+        const userId = req.user.userId;
+        if (!Number.isInteger(beatId) || beatId <= 0) {
+            return res.status(400).json({ message: "Некорректный id бита" });
+        }
+
+        const [[likeRow]] = await db.query(
+            'SELECT id FROM BeatLikes WHERE beatId = ? AND userId = ? LIMIT 1',
+            [beatId, userId]
+        );
+        const [[favoriteRow]] = await db.query(
+            'SELECT id FROM BeatFavorites WHERE beatId = ? AND userId = ? LIMIT 1',
+            [beatId, userId]
+        );
+
+        res.json({
+            liked: !!likeRow,
+            favorite: !!favoriteRow
+        });
+    } catch (e) {
+        res.status(500).json({ message: "Ошибка получения состояния действий" });
+    }
+});
+
 
 // 2. ДОБАВИТЬ БИТ (Защищенный эндпоинт - только для залогиненных)
 router.post('/', authMiddleware, async (req, res) => {
     try {
-        const validationError = validateBeatPayload(req.body);
+        const validationError = validateBeatPayload(req.body); // проверяем, что в запросе есть все нужные поля и они корректные
         if (validationError) {
             return res.status(400).json({ message: validationError });
         }
 
-        const title = String(req.body.title).trim();
+        const title = String(req.body.title).trim(); // получаем название бита
         const genre = String(req.body.genre).trim();
         const price = Number(req.body.price);
-        const sql = "INSERT INTO Beats (title, price, genre, userId) VALUES (?, ?, ?, ?)";
+        const sql = "INSERT INTO Beats (title, price, genre, userId) VALUES (?, ?, ?, ?)"; // добавляем бит в базу данных
         await db.query(sql, [title, price, genre, req.user.userId]);
+        broadcastDataChange('beats');
         
         res.status(201).json({ message: "Бит успешно добавлен!" });
     } catch (e) {
@@ -344,21 +375,22 @@ router.post('/', authMiddleware, async (req, res) => {
 // 3. УДАЛИТЬ БИТ (Защищенный эндпоинт: DELETE /api/beats/:id)
 router.delete('/:id', authMiddleware, async (req, res) => {
     try {
-        const beatId = req.params.id;
+        const beatId = req.params.id; 
         const userId = req.user.userId;
 
         // Проверяем, принадлежит ли бит этому пользователю
         const [beat] = await db.query("SELECT * FROM Beats WHERE id = ? AND userId = ?", [beatId, userId]);
         
-        if (beat.length === 0) {
+        if (beat.length === 0) { 
             return res.status(403).json({ message: "У вас нет прав на удаление этого бита" });
         }
 
         await db.query("DELETE FROM Beats WHERE id = ?", [beatId]);
+        broadcastDataChange('beats');
         res.json({ message: "Бит успешно удален!" });
     } catch (e) {
         res.status(500).json({ message: "Ошибка при удалении" });
     }
 });
 
-module.exports = router;
+module.exports = router; // Экспортируем роутер, чтобы использовать его в index.js

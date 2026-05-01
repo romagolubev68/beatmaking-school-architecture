@@ -7,7 +7,7 @@ require('dotenv').config();
 
 const EMAIL_REGEX = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
 
-function validateRegisterPayload(payload = {}) {
+function validateRegisterPayload(payload = {}) { // Проверяем, что в запросе есть все нужные поля и они корректные
     const { email, password, name } = payload;
 
     if (!email || !password || !name) {
@@ -29,7 +29,7 @@ function validateRegisterPayload(payload = {}) {
     return null;
 }
 
-function validateLoginPayload(payload = {}) {
+function validateLoginPayload(payload = {}) { // Проверяем, что в запросе есть все нужные поля и они корректные
     const { email, password } = payload;
 
     if (!email || !password) {
@@ -48,12 +48,12 @@ router.post('/register', async (req, res) => {
     try {
         const validationError = validateRegisterPayload(req.body);
         if (validationError) {
-            return res.status(400).json({ message: validationError });
+            return res.status(400).json({ message: validationError }); // Возвращаем ошибку, если в запросе есть некорректные данные
         }
 
         const email = String(req.body.email).trim().toLowerCase();
         const password = String(req.body.password);
-        const name = String(req.body.name).trim();
+        const name = String(req.body.name).trim(); 
 
         // Шифруем пароль
         const salt = await bcrypt.genSalt(10);
@@ -77,13 +77,13 @@ router.post('/register', async (req, res) => {
 // 2. ВХОД (ЛОГИН): POST /api/auth/login
 router.post('/login', async (req, res) => {
     try {
-        const validationError = validateLoginPayload(req.body);
+        const validationError = validateLoginPayload(req.body); // Проверяем, что в запросе есть все нужные поля и они корректные
         if (validationError) {
             return res.status(400).json({ message: validationError });
         }
 
-        const email = String(req.body.email).trim().toLowerCase();
-        const password = String(req.body.password);
+        const email = String(req.body.email).trim().toLowerCase(); // Получаем email
+        const password = String(req.body.password); // Получаем пароль
 
         // Ищем юзера по email
         const [users] = await db.query("SELECT * FROM Users WHERE email = ?", [email]);
@@ -117,6 +117,13 @@ router.post('/login', async (req, res) => {
         console.error(error);
         res.status(500).json({ message: "Ошибка сервера" });
     }
+});
+
+// 3. ВЫХОД ИЗ СИСТЕМЫ
+router.post('/logout', (req, res) => {
+    // JWT хранится на клиенте, поэтому для выхода достаточно очистить токен на фронтенде.
+    // Отдельный endpoint нужен для единообразия API и логирования действий.
+    res.json({ message: "Вы успешно вышли из аккаунта" });
 });
 
 module.exports = router;

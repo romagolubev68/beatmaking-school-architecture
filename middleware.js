@@ -1,10 +1,14 @@
-const jwt = require('jsonwebtoken');
+const jwt = require('jsonwebtoken'); // Для работы с JWT
 require('dotenv').config();
 
 module.exports = (req, res, next) => {
     try {
         // Ищем токен в заголовках запроса
-        const token = req.headers.authorization.split(' ')[1];
+        const authHeader = req.headers.authorization || '';
+        const token = authHeader.startsWith('Bearer ') ? authHeader.split(' ')[1] : null;
+        if (!token) {
+            return res.status(401).json({ message: "Вы не авторизованы. Передайте Bearer token." });
+        }
         const decoded = jwt.verify(token, process.env.JWT_SECRET);
         req.user = decoded; // Сохраняем ID юзера из токена
         next(); // Пропускаем к следующей функции

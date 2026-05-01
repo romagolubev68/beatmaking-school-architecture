@@ -1,8 +1,30 @@
-const appEl = document.getElementById('app');
+const appEl = document.getElementById('app'); 
 const API_AUTH = '/api/auth';
-const PRIVATE_ROUTES = new Set(['/profile', '/dashboard', '/checkout']);
-const state = {
-  token: localStorage.getItem('token'),
+const PRIVATE_ROUTES = new Set(['/profile', '/dashboard', '/checkout']); // приватные маршруты (только для авторизованных пользователей)
+const LIVE_UPDATE_ROUTES = new Set(['/', '/courses', '/courses/:id', '/dashboard', '/profile', '/checkout']);
+const defaultMentorPortfolio = {
+  achievements: ['Публикации релизов', 'Индивидуальные разборы', 'Практика с проектами'],
+  socials: []
+};
+const mentorPortfolioMeta = {
+  'Roman K.': {
+    photo: 'https://images.unsplash.com/photo-1516280440614-37939bbacd81?auto=format&fit=crop&w=800&q=80',
+    achievements: ['12+ лет в индустрии', 'Саунд-продюсер независимых артистов', 'Автор 4 учебных программ по Trap/Drill'],
+    socials: ['YouTube', 'SoundCloud']
+  },
+  'Alex M.': {
+    photo: 'https://images.unsplash.com/photo-1511379938547-c1f69419868d?auto=format&fit=crop&w=800&q=80',
+    achievements: ['Сведение для 100+ треков', 'Работа с коммерческими релизами', 'Наставник по мастерингу с 2020'],
+    socials: ['YouTube', 'Instagram']
+  },
+  'Vika P.': {
+    photo: 'https://images.unsplash.com/photo-1516280030429-27679b3dc9cf?auto=format&fit=crop&w=800&q=80',
+    achievements: ['Эксперт Ableton Live', 'Куратор live-performance проектов', 'Проводит воркшопы по саунд-дизайну'],
+    socials: ['Ableton', 'Telegram']
+  }
+};
+const state = { 
+  token: localStorage.getItem('token'), // токен авторизации
   user: null,
   flash: '',
   courseFilters: {
@@ -17,7 +39,14 @@ const state = {
   checkoutCart: []
 };
 
-function escapeHtml(value) {
+let activeRouteKey = '/';
+let activeRoutePath = '/';
+let eventSource = null;
+let lastRealtimeRerenderAt = 0;
+let realtimeVersion = 0;
+let courseActionState = { liked: false, favorite: false };
+
+function escapeHtml(value) { // функция для экранирования HTML-тегов
   return String(value ?? '')
     .replaceAll('&', '&amp;')
     .replaceAll('<', '&lt;')
@@ -26,22 +55,52 @@ function escapeHtml(value) {
     .replaceAll("'", '&#39;');
 }
 
-function isAuthenticated() {
+function isAuthenticated() { // функция для проверки авторизации
   return !!state.token;
 }
 
-function getAuthHeaders() {
+function getAuthHeaders() { // функция для получения заголовков
   return state.token ? { Authorization: `Bearer ${state.token}` } : {};
+}
+
+function getBeatImageUrl(beat = {}) {
+  const genre = String(beat.genre || 'beats').toLowerCase();
+  const seed = encodeURIComponent(`${beat.id || beat.title || 'beat'}-${genre}`);
+  return `https://picsum.photos/seed/${seed}/600/360`;
+}
+
+function getMentorPortfolio(mentor = {}) {
+  const known = mentorPortfolioMeta[mentor.fullName];
+  if (!known) {
+    return {
+      ...defaultMentorPortfolio,
+      photo: `https://picsum.photos/seed/mentor-${mentor.id || 'default'}/800/500`
+    };
+  }
+  return known;
 }
 
 async function apiFetch(url, options = {}) {
   try {
-    const response = await fetch(url, options);
+    const method = String(options.method || 'GET').toUpperCase();
+    const fetchOptions = {
+      ...options
+    };
+    if (method === 'GET' || method === 'HEAD') {
+      fetchOptions.cache = 'no-store';
+    }
+    const response = await fetch(url, fetchOptions);
     let payload = {};
     try {
       payload = await response.json();
     } catch (_) {
       payload = {};
+    }
+    if (!response.ok && !payload.message) {
+      const fallback = response.status >= 500
+        ? 'Ошибка сервера. Попробуйте позже.'
+        : 'Запрос не выполнен. Проверьте введенные данные.';
+      payload.message = fallback;
     }
     return { ok: response.ok, status: response.status, data: payload };
   } catch (error) {
@@ -54,11 +113,63 @@ async function apiFetch(url, options = {}) {
   }
 }
 
-function setFlash(message = '') {
+function withTs(url) {
+  const separator = url.includes('?') ? '&' : '?';
+  return `${url}${separator}ts=${Date.now()}`;
+}
+
+function updateCourseActionButtons() {
+  const likeBtn = document.getElementById('likeBtn');
+  const favoriteBtn = document.getElementById('favoriteBtn');
+  if (likeBtn) {
+    likeBtn.classList.toggle('active', !!courseActionState.liked);
+    likeBtn.textContent = courseActionState.liked ? 'Лайк: Вкл' : 'Лайк: Выкл';
+  }
+  if (favoriteBtn) {
+    favoriteBtn.classList.toggle('active', !!courseActionState.favorite);
+    favoriteBtn.textContent = courseActionState.favorite ? 'Избранное: Вкл' : 'Избранное: Выкл';
+  }
+}
+
+async function hydrateCourseActionState(beatId) {
+  if (!isAuthenticated()) {
+    courseActionState = { liked: false, favorite: false };
+    updateCourseActionButtons();
+    return;
+  }
+  const { ok, data } = await apiFetch(withTs(`/api/beats/item/${beatId}/state`), {
+    headers: getAuthHeaders()
+  });
+  if (!ok) {
+    // Не сбрасываем UI при временной сетевой ошибке/таймауте.
+    // Иначе в некоторых браузерах кнопка визуально "отжимается" сама.
+    return;
+  }
+  courseActionState = {
+    liked: !!data.liked,
+    favorite: !!data.favorite
+  };
+  updateCourseActionButtons();
+}
+
+async function refreshCourseDetailsInPlace() {
+  if (activeRouteKey !== '/courses/:id') return;
+  const beatId = activeRoutePath.split('/')[2];
+  if (!beatId) return;
+
+  const beat = await apiFetch(withTs(`/api/beats/item/${beatId}`));
+  if (beat.ok) {
+    const likeCount = document.getElementById('likeCount');
+    if (likeCount) likeCount.textContent = String(beat.data.likesCount || 0);
+  }
+  await hydrateCourseActionState(beatId);
+}
+
+function setFlash(message = '') { // функция для установки сообщения
   state.flash = message;
 }
 
-function syncNav(pathname = location.pathname) {
+function syncNav(pathname = location.pathname) { // функция для синхронизации навигации (кнопки входа/выхода, статус пользователя)
   const logged = isAuthenticated();
   const navLogin = document.getElementById('navLogin');
   const navRegister = document.getElementById('navRegister');
@@ -70,20 +181,21 @@ function syncNav(pathname = location.pathname) {
   if (navLogoutBtn) navLogoutBtn.style.display = logged ? '' : 'none';
   if (userState) {
     userState.textContent = logged
-      ? `Пользователь: ${state.user?.name || state.user?.email || 'авторизован'}`
+       ? `Пользователь: ${state.user?.name || state.user?.email || 'авторизован'}`
       : 'Гость';
   }
 
-  document.querySelectorAll('a[data-link]').forEach((a) => {
+  document.querySelectorAll('a[data-link]').forEach((a) => { 
     const href = a.getAttribute('href');
     const active = href === pathname || (href === '/courses' && pathname.startsWith('/courses/'));
     a.classList.toggle('active', active);
   });
 }
 
-function cardBeat(beat, withDetails = true) {
+function cardBeat(beat, withDetails = true) { // функция для отображения карточки бита
   return `
     <article class="card">
+      <img class="card-cover" src="${escapeHtml(getBeatImageUrl(beat))}" alt="Обложка курса ${escapeHtml(beat.title)}" loading="lazy" />
       <h3>${escapeHtml(beat.title)}</h3>
       <p class="muted">Жанр: ${escapeHtml(beat.genre)}</p>
       <p class="muted">Автор: ${escapeHtml(beat.authorName || 'неизвестно')}</p>
@@ -94,9 +206,9 @@ function cardBeat(beat, withDetails = true) {
   `;
 }
 
-async function renderHome() {
+async function renderHome() { // функция для отображения главной страницы
   appEl.innerHTML = '<div class="spinner">Загрузка главной страницы...</div>';
-  const { ok, data } = await apiFetch('/api/home/summary');
+  const { ok, data } = await apiFetch(withTs('/api/home/summary')); // получаем данные для главной страницы
   if (!ok) {
     appEl.innerHTML = '<div class="error">Не удалось загрузить главную страницу.</div>';
     return;
@@ -104,13 +216,35 @@ async function renderHome() {
   appEl.innerHTML = `
     <h2>Главная</h2>
     <div class="grid">
-      <article class="card"><h3>${data.stats.usersCount}</h3><p class="muted">Пользователей</p></article>
-      <article class="card"><h3>${data.stats.beatsCount}</h3><p class="muted">Битов в каталоге</p></article>
-      <article class="card"><h3>${data.stats.favoritesCount}</h3><p class="muted">Добавлений в избранное</p></article>
+      <article class="card"><h3 id="homeUsersCount">${data.stats.usersCount}</h3><p class="muted">Пользователей</p></article>
+      <article class="card"><h3 id="homeBeatsCount">${data.stats.beatsCount}</h3><p class="muted">Битов в каталоге</p></article>
+      <article class="card"><h3 id="homeFavoritesCount">${data.stats.favoritesCount}</h3><p class="muted">Добавлений в избранное</p></article>
     </div>
     <h3>Популярные курсы</h3>
-    ${data.popular.length ? `<div class="grid">${data.popular.map((item) => cardBeat(item)).join('')}</div>` : '<p class="muted">Пока нет данных.</p>'}
+    <div id="homePopularContainer">
+      ${data.popular.length ? `<div class="grid">${data.popular.map((item) => cardBeat(item)).join('')}</div>` : '<p class="muted">Пока нет данных.</p>'}
+    </div>
   `;
+}
+
+async function refreshHomeInPlace() {
+  if (activeRouteKey !== '/') return;
+  const { ok, data } = await apiFetch(withTs('/api/home/summary'));
+  if (!ok) return;
+
+  const users = document.getElementById('homeUsersCount');
+  const beats = document.getElementById('homeBeatsCount');
+  const favorites = document.getElementById('homeFavoritesCount');
+  const popularContainer = document.getElementById('homePopularContainer');
+
+  if (users) users.textContent = String(data.stats.usersCount ?? 0);
+  if (beats) beats.textContent = String(data.stats.beatsCount ?? 0);
+  if (favorites) favorites.textContent = String(data.stats.favoritesCount ?? 0);
+  if (popularContainer) {
+    popularContainer.innerHTML = data.popular.length
+      ? `<div class="grid">${data.popular.map((item) => cardBeat(item)).join('')}</div>`
+      : '<p class="muted">Пока нет данных.</p>';
+  }
 }
 
 async function renderMentors() {
@@ -126,9 +260,16 @@ async function renderMentors() {
       <div class="grid">
         ${data.map((m) => `
           <article class="card">
+            <img class="card-cover" src="${escapeHtml(getMentorPortfolio(m).photo)}" alt="Фото наставника ${escapeHtml(m.fullName)}" loading="lazy" />
             <h3>${escapeHtml(m.fullName)}</h3>
             <p>${escapeHtml(m.specialization)}</p>
             <p class="muted">${escapeHtml(m.bio)}</p>
+            <div class="mentor-tags">
+              ${getMentorPortfolio(m).socials.map((social) => `<span class="mentor-tag">${escapeHtml(social)}</span>`).join('')}
+            </div>
+            <ul>
+              ${getMentorPortfolio(m).achievements.map((item) => `<li>${escapeHtml(item)}</li>`).join('')}
+            </ul>
             <p><a href="${escapeHtml(m.portfolioUrl)}" target="_blank" rel="noreferrer">Портфолио</a></p>
           </article>
         `).join('')}
@@ -173,7 +314,7 @@ function renderRegister() {
   `;
 }
 
-async function ensureAuthUser() {
+async function ensureAuthUser() { // функция для проверки авторизации пользователя
   if (!isAuthenticated()) {
     state.user = null;
     return false;
@@ -260,14 +401,17 @@ async function renderCourseDetails(id) {
     <p>Жанр: <strong>${escapeHtml(beat.data.genre)}</strong></p>
     <p>Цена: <strong>${Number(beat.data.price).toFixed(2)} ₽</strong></p>
     <p>Лайков: <strong id="likeCount">${beat.data.likesCount || 0}</strong></p>
+    <div class="toggle-group">
+      <button class="btn toggle" id="likeBtn" data-id="${beat.data.id}" type="button">Лайк: Выкл</button>
+      <button class="btn toggle favorite" id="favoriteBtn" data-id="${beat.data.id}" type="button">Избранное: Выкл</button>
+    </div>
     <div class="form-row">
-      <button class="btn" id="likeBtn" data-id="${beat.data.id}">Лайк / убрать лайк</button>
-      <button class="btn" id="favoriteBtn" data-id="${beat.data.id}">В избранное / убрать</button>
       <button class="btn primary" id="addToCheckoutBtn" data-id="${beat.data.id}">Добавить к оплате</button>
     </div>
     <p><a data-link href="/courses">Назад к каталогу</a></p>
     <div id="courseActionError"></div>
   `;
+  await hydrateCourseActionState(beat.data.id);
 }
 
 async function renderProfile() {
@@ -275,7 +419,7 @@ async function renderProfile() {
   const me = await apiFetch(`${API_AUTH}/me`, {
     headers: { ...getAuthHeaders(), 'Content-Type': 'application/json' }
   });
-  if (!me.ok) {
+  if (!me.ok) { // если пользователь не авторизован, то перенаправляем на страницу входа
     state.token = null;
     state.user = null;
     localStorage.removeItem('token');
@@ -306,7 +450,7 @@ async function renderProfile() {
   `;
 }
 
-async function renderDashboard() {
+async function renderDashboard() { // функция для отображения раздела обучения
   appEl.innerHTML = '<div class="spinner">Загрузка моего обучения...</div>';
   const { ok, data } = await apiFetch('/api/beats/dashboard/summary', { headers: getAuthHeaders() });
   if (!ok) {
@@ -348,10 +492,16 @@ async function renderCheckout() {
 }
 
 function render404() {
-  appEl.innerHTML = '<h2>404</h2><p>Страница не найдена.</p>';
+  appEl.innerHTML = `
+    <section class="not-found">
+      <h2>404</h2>
+      <p>Страница не найдена или была перемещена.</p>
+      <a class="btn primary" data-link href="/">На главную</a>
+    </section>
+  `;
 }
 
-function parseRoute(path) {
+function parseRoute(path) { // функция для парсинга маршрута нужна для того, чтобы определить какая страница нужна для отображения
   if (path.startsWith('/courses/')) {
     return { key: '/courses/:id', params: { id: path.split('/')[2] } };
   }
@@ -360,11 +510,11 @@ function parseRoute(path) {
 
 async function render(path, replace = false) {
   try {
-    const targetPath = path || '/';
+    const targetPath = path || '/'; // получаем целевой маршрут
     const route = parseRoute(targetPath);
-    const privateGuard = PRIVATE_ROUTES.has(route.key) || PRIVATE_ROUTES.has(targetPath);
+    const privateGuard = PRIVATE_ROUTES.has(route.key) || PRIVATE_ROUTES.has(targetPath); // проверяем, является ли маршрут приватным
 
-    if (privateGuard && !(await ensureAuthUser())) {
+    if (privateGuard && !(await ensureAuthUser())) { // если маршрут приватный и пользователь не авторизован, то перенаправляем на страницу входа
       setFlash('Сначала войдите в аккаунт, чтобы открыть приватный раздел.');
       const redirected = '/auth/login';
       history.replaceState({}, '', redirected);
@@ -375,7 +525,7 @@ async function render(path, replace = false) {
     }
 
     if ((targetPath === '/auth/login' || targetPath === '/auth/register') && (await ensureAuthUser())) {
-      await render('/profile', true);
+      await render('/profile', true); // если пользователь авторизован, то перенаправляем на страницу профиля
       return;
     }
 
@@ -420,6 +570,8 @@ async function render(path, replace = false) {
         break;
     }
 
+    activeRouteKey = route.key;
+    activeRoutePath = targetPath;
     attachHandlers(route.key);
   } catch (error) {
     console.error(error);
@@ -430,6 +582,83 @@ async function render(path, replace = false) {
     `;
   }
 }
+
+function rerenderOnLiveUpdate(force = false) {
+  if (!LIVE_UPDATE_ROUTES.has(activeRouteKey)) return;
+  const now = Date.now();
+  if (!force && now - lastRealtimeRerenderAt < 1200) return;
+  lastRealtimeRerenderAt = now;
+  render(activeRoutePath, true);
+}
+
+async function checkRealtimeVersionAndSync() {
+  const { ok, data } = await apiFetch(withTs('/api/realtime/version'));
+  if (!ok || typeof data.version !== 'number') return;
+  if (!realtimeVersion) {
+    realtimeVersion = data.version;
+    return;
+  }
+  if (data.version > realtimeVersion) {
+    realtimeVersion = data.version;
+    if (activeRouteKey === '/courses/:id') {
+      await refreshCourseDetailsInPlace();
+    } else {
+      rerenderOnLiveUpdate(true);
+    }
+  }
+}
+
+function initRealtimeUpdates() {
+  if (eventSource) return;
+  if (!window.EventSource) return;
+
+  eventSource = new EventSource('/api/events');
+  eventSource.addEventListener('connected', (event) => {
+    try {
+      const payload = JSON.parse(event.data);
+      if (typeof payload.version === 'number') {
+        realtimeVersion = payload.version;
+      }
+    } catch (_) {}
+  });
+  eventSource.addEventListener('data_changed', (event) => {
+    try {
+      const payload = JSON.parse(event.data);
+      if (typeof payload.version === 'number') {
+        realtimeVersion = Math.max(realtimeVersion, payload.version);
+      }
+    } catch (_) {}
+    if (activeRouteKey === '/courses/:id') {
+      refreshCourseDetailsInPlace();
+      return;
+    }
+    rerenderOnLiveUpdate(true);
+  });
+  eventSource.onerror = () => {
+    if (eventSource) {
+      eventSource.close();
+      eventSource = null;
+    }
+    setTimeout(() => {
+      initRealtimeUpdates();
+    }, 3000);
+  };
+}
+
+setInterval(() => {
+  checkRealtimeVersionAndSync();
+}, 4000);
+
+setInterval(() => {
+  if (activeRouteKey !== '/courses/:id') return;
+  refreshCourseDetailsInPlace();
+}, 2500);
+
+setInterval(() => {
+  if (document.visibilityState !== 'visible') return;
+  if (activeRouteKey !== '/') return;
+  refreshHomeInPlace();
+}, 2500);
 
 function showError(containerId, text) {
   const target = document.getElementById(containerId);
@@ -464,7 +693,7 @@ async function handleLoginSubmit(form) {
   await render('/profile', true);
 }
 
-async function handleRegisterSubmit(form) {
+async function handleRegisterSubmit(form) { // функция для регистрации пользователя
   const formData = new FormData(form);
   const name = String(formData.get('name')).trim();
   const email = String(formData.get('email')).trim();
@@ -501,8 +730,8 @@ async function handleRegisterSubmit(form) {
   await render('/auth/login', true);
 }
 
-async function handleCreateBeat(form) {
-  const formData = new FormData(form);
+async function handleCreateBeat(form) { // функция для добавления бита
+  const formData = new FormData(form); 
   const title = String(formData.get('title')).trim();
   const genre = String(formData.get('genre')).trim();
   const price = Number(formData.get('price'));
@@ -512,7 +741,7 @@ async function handleCreateBeat(form) {
     return;
   }
 
-  const { ok, data } = await apiFetch('/api/beats', {
+  const { ok, data } = await apiFetch('/api/beats', { // добавляем бит в базу данных
     method: 'POST',
     headers: { ...getAuthHeaders(), 'Content-Type': 'application/json' },
     body: JSON.stringify({ title, genre, price })
@@ -535,12 +764,19 @@ async function handleLikeOrFavorite(endpoint, beatId) {
   });
   if (!ok) {
     showError('courseActionError', data.message || 'Операция не выполнена.');
-    return;
+    return null;
   }
   if (endpoint === 'like') {
     const likeCount = document.getElementById('likeCount');
     if (likeCount) likeCount.textContent = String(data.likesCount || 0);
+    courseActionState.liked = !!data.liked;
   }
+  if (endpoint === 'favorite') {
+    courseActionState.favorite = !!data.favorite;
+  }
+  updateCourseActionButtons();
+  await refreshCourseDetailsInPlace();
+  return data;
 }
 
 function attachHandlers(routeKey) {
@@ -552,7 +788,7 @@ function attachHandlers(routeKey) {
     });
   }
 
-  const registerForm = document.getElementById('registerForm');
+  const registerForm = document.getElementById('registerForm'); // добавляем обработчик нажатия на кнопку регистрации 
   if (registerForm) {
     registerForm.addEventListener('submit', async (event) => {
       event.preventDefault();
@@ -568,7 +804,7 @@ function attachHandlers(routeKey) {
     });
   }
 
-  const filterForm = document.getElementById('catalogFilterForm');
+  const filterForm = document.getElementById('catalogFilterForm'); // добавляем обработчик нажатия на кнопку фильтрации
   if (filterForm) {
     filterForm.addEventListener('submit', async (event) => {
       event.preventDefault();
@@ -598,16 +834,16 @@ function attachHandlers(routeKey) {
     });
   }
 
-  const likeBtn = document.getElementById('likeBtn');
+  const likeBtn = document.getElementById('likeBtn'); // добавляем обработчик нажатия на кнопку лайка
   if (likeBtn) {
     likeBtn.addEventListener('click', async () => {
-      await handleLikeOrFavorite('like', likeBtn.dataset.id);
+      await handleLikeOrFavorite('like', likeBtn.dataset.id); // добавляем лайк в базу данных
     });
   }
-  const favoriteBtn = document.getElementById('favoriteBtn');
+  const favoriteBtn = document.getElementById('favoriteBtn'); // добавляем обработчик нажатия на кнопку добавления в избранное
   if (favoriteBtn) {
     favoriteBtn.addEventListener('click', async () => {
-      await handleLikeOrFavorite('favorite', favoriteBtn.dataset.id);
+      await handleLikeOrFavorite('favorite', favoriteBtn.dataset.id); // добавляем в избранное в базу данных
     });
   }
   const addToCheckoutBtn = document.getElementById('addToCheckoutBtn');
@@ -646,6 +882,10 @@ window.addEventListener('popstate', () => render(location.pathname, true));
 const navLogoutBtn = document.getElementById('navLogoutBtn');
 if (navLogoutBtn) {
   navLogoutBtn.addEventListener('click', async () => {
+    await apiFetch(`${API_AUTH}/logout`, {
+      method: 'POST',
+      headers: { ...getAuthHeaders(), 'Content-Type': 'application/json' }
+    });
     localStorage.removeItem('token');
     state.token = null;
     state.user = null;
@@ -654,4 +894,22 @@ if (navLogoutBtn) {
   });
 }
 
+window.addEventListener('storage', (event) => {
+  if (event.key === 'token') {
+    state.token = localStorage.getItem('token');
+    state.user = null;
+    syncNav(location.pathname);
+  }
+});
+
+window.addEventListener('focus', () => {
+  if (activeRouteKey === '/') {
+    refreshHomeInPlace();
+  }
+  if (activeRouteKey === '/courses/:id') {
+    refreshCourseDetailsInPlace();
+  }
+});
+
+initRealtimeUpdates();
 render(location.pathname || '/', true);

@@ -4,22 +4,59 @@ const authMiddleware = require('./middleware');
 const db = require('./db');
 const beatsRoutes = require('./beats');
 const path = require('path');
+const { appEvents, getDataVersion } = require('./events');
 require('dotenv').config();         // Снова подключаем конфиг
 
 const app = express();
 
 // Middleware 
-app.use(cors());             // Включаем CORS
+app.use(cors());             // Включаем CORS (Междоменные запросы)
 app.use(express.json());     // "Ты должен понимать данные в формате JSON"
+app.use('/api', (req, res, next) => {
+    res.setHeader('Cache-Control', 'no-store, no-cache, must-revalidate, proxy-revalidate');
+    res.setHeader('Pragma', 'no-cache');
+    res.setHeader('Expires', '0');
+    next();
+});
 
 app.use(express.static('public'));
 
 const authRoutes = require('./auth'); // Импортируем наш новый файл
 app.use('/api/auth', authRoutes);     // Все маршруты из auth.js будут начинаться с /api/auth
 
-app.use('/api/beats', beatsRoutes);
+app.use('/api/beats', beatsRoutes); // Все маршруты из beats.js будут начинаться с /api/beats
 
-app.get('/api/home/summary', async (req, res) => {
+app.get('/api/events', (req, res) => {
+    res.setHeader('Content-Type', 'text/event-stream');
+    res.setHeader('Cache-Control', 'no-store, no-cache, must-revalidate, proxy-revalidate');
+    res.setHeader('Connection', 'keep-alive');
+    res.setHeader('X-Accel-Buffering', 'no');
+    if (typeof res.flushHeaders === 'function') {
+        res.flushHeaders();
+    }
+
+    const sendHeartbeat = setInterval(() => {
+        res.write(`event: heartbeat\ndata: ${JSON.stringify({ at: new Date().toISOString() })}\n\n`);
+    }, 25000);
+
+    const handleDataChanged = (payload) => {
+        res.write(`event: data_changed\ndata: ${JSON.stringify(payload)}\n\n`);
+    };
+
+    appEvents.on('data:changed', handleDataChanged);
+    res.write(`event: connected\ndata: ${JSON.stringify({ at: new Date().toISOString(), version: getDataVersion() })}\n\n`);
+
+    req.on('close', () => {
+        clearInterval(sendHeartbeat);
+        appEvents.off('data:changed', handleDataChanged);
+    });
+});
+
+app.get('/api/realtime/version', (req, res) => {
+    res.json({ version: getDataVersion(), at: new Date().toISOString() });
+});
+
+app.get('/api/home/summary', async (req, res) => { // получаем популярные биты
     try {
         const [popularRows] = await db.query(
             `
@@ -39,7 +76,7 @@ app.get('/api/home/summary', async (req, res) => {
             `
         );
 
-        const [statsRows] = await db.query(
+        const [statsRows] = await db.query( // получаем статистику по пользователям, битам и избранным битам
             `
             SELECT
                 (SELECT COUNT(*) FROM Users) AS usersCount,
@@ -83,7 +120,7 @@ app.get('/', (req, res) => {
 // Маршрут получения профиля (доступен только с токеном)
 app.get('/api/auth/me', authMiddleware, async (req, res) => {
     try {
-        const [users] = await db.query("SELECT id, name, email, createdAt FROM Users WHERE id = ?", [req.user.userId]);
+        const [users] = await db.query("SELECT id, name, email, createdAt FROM Users WHERE id = ?", [req.user.userId]); // получаем профиль пользователя по id
         res.json(users[0]);
     } catch (e) {
         res.status(500).json({ message: "Ошибка при получении профиля" });
@@ -91,9 +128,9 @@ app.get('/api/auth/me', authMiddleware, async (req, res) => {
 });
 
 // Далее: для всех не-API маршрутов отдаём index.html (SPA)
-app.use((req, res, next) => {
+app.use((req, res, next) => { // для всех не-API маршрутов отдаём index.html (SPA)
     if (req.path.startsWith('/api')) {
-        return res.status(404).json({ message: 'API route not found' });
+        return res.status(404).json({ message: 'API route not found', path: req.path });
     }
     res.sendFile(path.join(__dirname, 'public', 'index.html'));
 });
