@@ -26,6 +26,7 @@ SPA-приложение на JavaScript для обучения битмейк�
 - 404 страница для несуществующих маршрутов
 - Улучшенная обработка сетевых/серверных ошибок на клиенте
 - Автообновление данных между открытыми окнами/браузерами через SSE
+- Оплата курсов с сохранением покупок в базе данных
 
 ## API эндпоинты
 
@@ -77,6 +78,7 @@ JWT_SECRET=your_jwt_secret
    - `001_create_users.sql`
    - `002_create_beats.sql`
    - `003_create_mentors.sql`
+   - `004_create_course_purchases.sql`
 5. Запустить сервер:
    - `node index.js`
 6. Открыть:
@@ -100,3 +102,10 @@ JWT_SECRET=your_jwt_secret
 - `profile.png` - личный кабинет
 - `mentors.png` - наставники
 - `checkout.png` - оплата
+
+## Как поставить свои фото наставников
+
+- Открой файл `public/app.js`
+- Найди объект `mentorPortfolioMeta`
+- Замени поле `photo` у нужного наставника на свою ссылку или путь (например `/images/mentors/my-photo.jpg`)
+- Если используешь локальные файлы, положи их в `public/images/mentors/`

@@ -169,6 +169,37 @@ function setFlash(message = '') { // функция для установки с
   state.flash = message;
 }
 
+async function refreshCoursesInPlace() {
+  if (activeRouteKey !== '/courses') return;
+  const q = new URLSearchParams({
+    search: state.courseFilters.search,
+    genre: state.courseFilters.genre,
+    minPrice: state.courseFilters.minPrice,
+    maxPrice: state.courseFilters.maxPrice,
+    sort: state.courseFilters.sort,
+    page: String(state.courseFilters.page),
+    limit: String(state.courseFilters.limit)
+  });
+  const { ok, data } = await apiFetch(withTs(`/api/beats?${q.toString()}`));
+  if (!ok) return;
+
+  const listContainer = document.getElementById('coursesListContainer');
+  const paginationContainer = document.getElementById('coursesPaginationContainer');
+  if (listContainer) {
+    listContainer.innerHTML = data.items.length
+      ? `<div class="grid">${data.items.map((item) => cardBeat(item)).join('')}</div>`
+      : '<p class="muted">Ничего не найдено.</p>';
+  }
+  if (paginationContainer) {
+    paginationContainer.innerHTML = `
+      <button class="btn" id="prevPageBtn" ${data.pagination.page <= 1 ? 'disabled' : ''}>Назад</button>
+      <span>Страница ${data.pagination.page} из ${data.pagination.totalPages}</span>
+      <button class="btn" id="nextPageBtn" ${data.pagination.page >= data.pagination.totalPages ? 'disabled' : ''}>Вперед</button>
+    `;
+    attachHandlers('/courses');
+  }
+}
+
 function syncNav(pathname = location.pathname) { // функция для синхронизации навигации (кнопки входа/выхода, статус пользователя)
   const logged = isAuthenticated();
   const navLogin = document.getElementById('navLogin');
@@ -217,7 +248,7 @@ async function renderHome() { // функция для отображения г
     <h2>Главная</h2>
     <div class="grid">
       <article class="card"><h3 id="homeUsersCount">${data.stats.usersCount}</h3><p class="muted">Пользователей</p></article>
-      <article class="card"><h3 id="homeBeatsCount">${data.stats.beatsCount}</h3><p class="muted">Битов в каталоге</p></article>
+      <article class="card"><h3 id="homeBeatsCount">${data.stats.beatsCount}</h3><p class="muted">Курсов в каталоге</p></article>
       <article class="card"><h3 id="homeFavoritesCount">${data.stats.favoritesCount}</h3><p class="muted">Добавлений в избранное</p></article>
     </div>
     <h3>Популярные курсы</h3>
@@ -354,7 +385,7 @@ async function renderCourses() {
     <h2>Каталог курсов</h2>
     <form id="catalogFilterForm">
       <div class="form-row">
-        <label>Поиск<input name="search" value="${escapeHtml(state.courseFilters.search)}" placeholder="Название бита" /></label>
+        <label>Поиск<input name="search" value="${escapeHtml(state.courseFilters.search)}" placeholder="Название курса" /></label>
         <label>Жанр
           <select name="genre">
             <option value="">Все</option>
@@ -379,8 +410,10 @@ async function renderCourses() {
       </div>
       <button class="btn primary" type="submit">Найти</button>
     </form>
-    ${items.length ? `<div class="grid">${items.map((item) => cardBeat(item)).join('')}</div>` : '<p class="muted">Ничего не найдено.</p>'}
-    <div class="pagination">
+    <div id="coursesListContainer">
+      ${items.length ? `<div class="grid">${items.map((item) => cardBeat(item)).join('')}</div>` : '<p class="muted">Ничего не найдено.</p>'}
+    </div>
+    <div id="coursesPaginationContainer" class="pagination">
       <button class="btn" id="prevPageBtn" ${pagination.page <= 1 ? 'disabled' : ''}>Назад</button>
       <span>Страница ${pagination.page} из ${pagination.totalPages}</span>
       <button class="btn" id="nextPageBtn" ${pagination.page >= pagination.totalPages ? 'disabled' : ''}>Вперед</button>
@@ -433,7 +466,7 @@ async function renderProfile() {
     <h2>Профиль</h2>
     <p><strong>Имя:</strong> ${escapeHtml(me.data.name)}</p>
     <p><strong>Email:</strong> ${escapeHtml(me.data.email)}</p>
-    <h3>Создать контент</h3>
+    <h3>Создать курс</h3>
     <form id="addBeatForm">
       <div class="form-row">
         <label>Название<input name="title" required minlength="2" /></label>
@@ -442,11 +475,11 @@ async function renderProfile() {
       <div class="form-row">
         <label>Цена<input name="price" type="number" min="0" required /></label>
       </div>
-      <button class="btn primary" type="submit">Добавить бит</button>
+      <button class="btn primary" type="submit">Добавить курс</button>
     </form>
     <div id="profileFormError"></div>
-    <h3>Мои биты</h3>
-    ${beats.length ? `<div class="grid">${beats.map((item) => cardBeat(item, false)).join('')}</div>` : '<p class="muted">У вас пока нет битов.</p>'}
+    <h3>Мои курсы</h3>
+    ${beats.length ? `<div class="grid">${beats.map((item) => cardBeat(item, false)).join('')}</div>` : '<p class="muted">У вас пока нет курсов.</p>'}
   `;
 }
 
@@ -471,7 +504,9 @@ async function renderDashboard() { // функция для отображени
 
 async function renderCheckout() {
   appEl.innerHTML = '<div class="spinner">Загрузка раздела оплаты...</div>';
-  const { ok, data } = await apiFetch(`/api/beats/by-ids/list?ids=${state.checkoutCart.join(',')}`);
+  const { ok, data } = await apiFetch(withTs(`/api/beats/by-ids/list?ids=${state.checkoutCart.join(',')}`), {
+    headers: getAuthHeaders()
+  });
   if (!ok) {
     appEl.innerHTML = '<div class="error">Не удалось загрузить корзину оплаты.</div>';
     return;
@@ -486,7 +521,7 @@ async function renderCheckout() {
       </ul>
       <p><strong>Итого: ${total.toFixed(2)} ₽</strong></p>
     ` : '<p>Корзина пуста.</p>'}
-    <button id="checkoutSubmitBtn" class="btn primary" ${data.length ? '' : 'disabled'}>Оплатить</button>
+    <button id="checkoutSubmitBtn" class="btn primary" ${data.length ? '' : 'disabled'}>Оплатить курсы</button>
     <div id="checkoutMessage"></div>
   `;
 }
@@ -585,6 +620,18 @@ async function render(path, replace = false) {
 
 function rerenderOnLiveUpdate(force = false) {
   if (!LIVE_UPDATE_ROUTES.has(activeRouteKey)) return;
+  if (activeRouteKey === '/') {
+    refreshHomeInPlace();
+    return;
+  }
+  if (activeRouteKey === '/courses') {
+    refreshCoursesInPlace();
+    return;
+  }
+  if (activeRouteKey === '/courses/:id') {
+    refreshCourseDetailsInPlace();
+    return;
+  }
   const now = Date.now();
   if (!force && now - lastRealtimeRerenderAt < 1200) return;
   lastRealtimeRerenderAt = now;
@@ -747,7 +794,7 @@ async function handleCreateBeat(form) { // функция для добавле�
     body: JSON.stringify({ title, genre, price })
   });
   if (!ok) {
-    showError('profileFormError', data.message || 'Ошибка создания контента.');
+    showError('profileFormError', data.message || 'Ошибка создания курса.');
     return;
   }
   await render('/profile', true);
@@ -858,10 +905,27 @@ function attachHandlers(routeKey) {
 
   const checkoutSubmitBtn = document.getElementById('checkoutSubmitBtn');
   if (checkoutSubmitBtn) {
-    checkoutSubmitBtn.addEventListener('click', () => {
-      state.checkoutCart = [];
+    checkoutSubmitBtn.addEventListener('click', async () => {
+      const { ok, data } = await apiFetch('/api/beats/checkout/process', {
+        method: 'POST',
+        headers: { ...getAuthHeaders(), 'Content-Type': 'application/json' },
+        body: JSON.stringify({ ids: state.checkoutCart })
+      });
       const msg = document.getElementById('checkoutMessage');
-      if (msg) msg.innerHTML = '<div class="success">Оплата успешно выполнена (демо-режим).</div>';
+      if (!ok) {
+        if (msg) msg.innerHTML = `<div class="error">${escapeHtml(data.message || 'Оплата не выполнена')}</div>`;
+        return;
+      }
+      state.checkoutCart = [];
+      if (msg) {
+        msg.innerHTML = `
+          <div class="success">
+            ${escapeHtml(data.message || 'Оплата успешно выполнена')}. Куплено курсов: <strong>${Number(data.purchasedCount || 0)}</strong>.
+            Сумма: <strong>${Number(data.totalAmount || 0).toFixed(2)} ₽</strong>
+          </div>
+        `;
+      }
+      await refreshHomeInPlace();
     });
   }
 

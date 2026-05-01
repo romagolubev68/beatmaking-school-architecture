@@ -49,6 +49,27 @@ function buildSort(sort = '') {
     }
 }
 
+let purchasesTableReady = false;
+async function ensureCoursePurchasesTable() {
+    if (purchasesTableReady) return;
+    await db.query(
+        `
+        CREATE TABLE IF NOT EXISTS CoursePurchases (
+            id INT AUTO_INCREMENT PRIMARY KEY,
+            userId INT NOT NULL,
+            beatId INT NOT NULL,
+            paidAmount DECIMAL(10, 2) NOT NULL DEFAULT 0,
+            status VARCHAR(30) NOT NULL DEFAULT 'paid',
+            paidAt DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
+            UNIQUE KEY uniq_user_course_purchase (userId, beatId),
+            CONSTRAINT fk_course_purchases_user FOREIGN KEY (userId) REFERENCES Users(id) ON DELETE CASCADE,
+            CONSTRAINT fk_course_purchases_beat FOREIGN KEY (beatId) REFERENCES Beats(id) ON DELETE CASCADE
+        )
+        `
+    );
+    purchasesTableReady = true;
+}
+
 // 1. ПОЛУЧИТЬ КАТАЛОГ БИТОВ (публично, c поиском/фильтрами/сортировкой/пагинацией)
 router.get('/', async (req, res) => { // получаем биты из базы данных
     try {
@@ -150,6 +171,62 @@ router.get('/by-ids/list', async (req, res) => {
     }
 });
 
+// 1.0.1. ОПЛАТА КУРСОВ (приватно)
+router.post('/checkout/process', authMiddleware, async (req, res) => {
+    try {
+        await ensureCoursePurchasesTable();
+        const userId = req.user.userId;
+        const ids = Array.isArray(req.body?.ids) ? req.body.ids : [];
+        const courseIds = [...new Set(
+            ids
+                .map((value) => Number(value))
+                .filter((id) => Number.isInteger(id) && id > 0)
+        )];
+
+        if (!courseIds.length) {
+            return res.status(400).json({ message: "Добавьте хотя бы один курс в корзину" });
+        }
+
+        const placeholders = courseIds.map(() => '?').join(', ');
+        const [courses] = await db.query(
+            `
+            SELECT id, title, price
+            FROM Beats
+            WHERE id IN (${placeholders})
+            `,
+            courseIds
+        );
+
+        if (!courses.length) {
+            return res.status(404).json({ message: "Курсы для оплаты не найдены" });
+        }
+
+        // Сохраняем покупки в базе. Повторная покупка того же курса просто обновляет дату/сумму.
+        for (const course of courses) {
+            await db.query(
+                `
+                INSERT INTO CoursePurchases (userId, beatId, paidAmount, status, paidAt)
+                VALUES (?, ?, ?, 'paid', NOW())
+                ON DUPLICATE KEY UPDATE paidAmount = VALUES(paidAmount), status = 'paid', paidAt = NOW()
+                `,
+                [userId, course.id, Number(course.price || 0)]
+            );
+        }
+
+        const totalAmount = courses.reduce((sum, course) => sum + Number(course.price || 0), 0);
+        broadcastDataChange('purchases');
+
+        res.json({
+            message: "Оплата прошла успешно",
+            purchasedCount: courses.length,
+            totalAmount,
+            items: courses
+        });
+    } catch (e) {
+        res.status(500).json({ message: "Ошибка при оплате курсов" });
+    }
+});
+
 // 1.1. ПОЛУЧИТЬ СВОИ БИТЫ (Приватный эндпоинт)
 router.get('/my', authMiddleware, async (req, res) => {
     try {
@@ -168,7 +245,7 @@ router.post('/item/:id/like', authMiddleware, async (req, res) => {
         const userId = req.user.userId; // получаем id пользователя из токена
         const [beats] = await db.query('SELECT id FROM Beats WHERE id = ?', [beatId]);
         if (!beats.length) {
-            return res.status(404).json({ message: "Бит не найден" });
+            return res.status(404).json({ message: "Курс не найден" });
         }
 
         const [existing] = await db.query( // проверяем, есть ли лайк на этот бит у этого пользователя
@@ -203,7 +280,7 @@ router.post('/item/:id/favorite', authMiddleware, async (req, res) => {
         const userId = req.user.userId; // получаем id пользователя из токена
         const [beats] = await db.query('SELECT id FROM Beats WHERE id = ?', [beatId]); // проверяем, существует ли бит
         if (!beats.length) {
-            return res.status(404).json({ message: "Бит не найден" });
+            return res.status(404).json({ message: "Курс не найден" });
         }
 
         const [existing] = await db.query( // проверяем, есть ли избранное на этот бит у этого пользователя
@@ -289,7 +366,7 @@ router.get('/item/:id', async (req, res) => {
     try {
         const beatId = Number(req.params.id);
         if (!Number.isInteger(beatId) || beatId <= 0) { // проверяем, является ли id бита целым числом и больше 0
-            return res.status(400).json({ message: "Некорректный id бита" });
+            return res.status(400).json({ message: "Некорректный id курса" });
         }
 
         const [rows] = await db.query( // получаем бит по id
@@ -314,12 +391,12 @@ router.get('/item/:id', async (req, res) => {
 
         const beat = rows[0];
         if (!beat) {
-            return res.status(404).json({ message: "Бит не найден" });
+            return res.status(404).json({ message: "Курс не найден" });
         }
 
         res.json(beat);
     } catch (e) {
-        res.status(500).json({ message: "Ошибка при получении бита" });
+        res.status(500).json({ message: "Ошибка при получении курса" });
     }
 });
 
@@ -366,9 +443,9 @@ router.post('/', authMiddleware, async (req, res) => {
         await db.query(sql, [title, price, genre, req.user.userId]);
         broadcastDataChange('beats');
         
-        res.status(201).json({ message: "Бит успешно добавлен!" });
+        res.status(201).json({ message: "Курс успешно добавлен!" });
     } catch (e) {
-        res.status(500).json({ message: "Ошибка при создании бита" });
+        res.status(500).json({ message: "Ошибка при создании курса" });
     }
 });
 
@@ -382,12 +459,12 @@ router.delete('/:id', authMiddleware, async (req, res) => {
         const [beat] = await db.query("SELECT * FROM Beats WHERE id = ? AND userId = ?", [beatId, userId]);
         
         if (beat.length === 0) { 
-            return res.status(403).json({ message: "У вас нет прав на удаление этого бита" });
+            return res.status(403).json({ message: "У вас нет прав на удаление этого курса" });
         }
 
         await db.query("DELETE FROM Beats WHERE id = ?", [beatId]);
         broadcastDataChange('beats');
-        res.json({ message: "Бит успешно удален!" });
+        res.json({ message: "Курс успешно удален!" });
     } catch (e) {
         res.status(500).json({ message: "Ошибка при удалении" });
     }
