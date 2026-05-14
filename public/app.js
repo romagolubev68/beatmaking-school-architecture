@@ -52,6 +52,8 @@ let eventSource = null;
 let lastRealtimeRerenderAt = 0;
 let realtimeVersion = 0;
 let courseActionState = { liked: false, favorite: false };
+/** Подпись последних данных главной — чтобы не пересоздавать DOM и <img> без необходимости (Chrome + lazy). */
+let lastHomeSummarySignature = '';
 
 function escapeHtml(value) { // функция для экранирования HTML-тегов
   return String(value ?? '')
@@ -123,6 +125,15 @@ async function apiFetch(url, options = {}) {
 function withTs(url) {
   const separator = url.includes('?') ? '&' : '?';
   return `${url}${separator}ts=${Date.now()}`;
+}
+
+function buildHomeSummarySignature(data) {
+  const s = data?.stats || {};
+  const popular = Array.isArray(data?.popular) ? data.popular : [];
+  const popularPart = popular
+    .map((p) => [p.id, p.title, p.genre, p.price, p.likesCount, p.authorName].join(':'))
+    .join('|');
+  return [s.usersCount, s.beatsCount, s.favoritesCount, popularPart].join('||');
 }
 
 function updateCourseActionButtons() {
@@ -230,10 +241,11 @@ function syncNav(pathname = location.pathname) { // функция для син
   });
 }
 
-function cardBeat(beat, withDetails = true) { // функция для отображения карточки бита
+function cardBeat(beat, withDetails = true, options = {}) { // функция для отображения карточки бита
+  const imgLoading = options.imageLoading === 'eager' ? 'eager' : 'lazy';
   return `
     <article class="card">
-      <img class="card-cover" src="${escapeHtml(getBeatImageUrl(beat))}" alt="Обложка курса ${escapeHtml(beat.title)}" loading="lazy" />
+      <img class="card-cover" src="${escapeHtml(getBeatImageUrl(beat))}" alt="Обложка курса ${escapeHtml(beat.title)}" loading="${imgLoading}" />
       <h3>${escapeHtml(beat.title)}</h3>
       <p class="muted">Жанр: ${escapeHtml(beat.genre)}</p>
       <p class="muted">Автор: ${escapeHtml(beat.authorName || 'неизвестно')}</p>
@@ -251,6 +263,7 @@ async function renderHome() { // функция для отображения г
     appEl.innerHTML = '<div class="error">Не удалось загрузить главную страницу.</div>';
     return;
   }
+  lastHomeSummarySignature = buildHomeSummarySignature(data);
   appEl.innerHTML = `
     <h2>Главная</h2>
     <div class="grid">
@@ -260,7 +273,7 @@ async function renderHome() { // функция для отображения г
     </div>
     <h3>Популярные курсы</h3>
     <div id="homePopularContainer">
-      ${data.popular.length ? `<div class="grid">${data.popular.map((item) => cardBeat(item)).join('')}</div>` : '<p class="muted">Пока нет данных.</p>'}
+      ${data.popular.length ? `<div class="grid">${data.popular.map((item) => cardBeat(item, true, { imageLoading: 'eager' })).join('')}</div>` : '<p class="muted">Пока нет данных.</p>'}
     </div>
   `;
 }
@@ -269,6 +282,10 @@ async function refreshHomeInPlace() {
   if (activeRouteKey !== '/') return;
   const { ok, data } = await apiFetch(withTs('/api/home/summary'));
   if (!ok) return;
+
+  const nextSig = buildHomeSummarySignature(data);
+  if (nextSig === lastHomeSummarySignature) return;
+  lastHomeSummarySignature = nextSig;
 
   const users = document.getElementById('homeUsersCount');
   const beats = document.getElementById('homeBeatsCount');
@@ -280,7 +297,7 @@ async function refreshHomeInPlace() {
   if (favorites) favorites.textContent = String(data.stats.favoritesCount ?? 0);
   if (popularContainer) {
     popularContainer.innerHTML = data.popular.length
-      ? `<div class="grid">${data.popular.map((item) => cardBeat(item)).join('')}</div>`
+      ? `<div class="grid">${data.popular.map((item) => cardBeat(item, true, { imageLoading: 'eager' })).join('')}</div>`
       : '<p class="muted">Пока нет данных.</p>';
   }
 }
@@ -724,13 +741,7 @@ setInterval(() => {
 setInterval(() => {
   if (activeRouteKey !== '/courses/:id') return;
   refreshCourseDetailsInPlace();
-}, 2500);
-
-setInterval(() => {
-  if (document.visibilityState !== 'visible') return;
-  if (activeRouteKey !== '/') return;
-  refreshHomeInPlace();
-}, 2500);
+}, 12000);
 
 function showError(containerId, text) {
   const target = document.getElementById(containerId);
