@@ -96,20 +96,55 @@ function coverGradientDataUrl(seedKey, width, height) {
   return `data:image/svg+xml;charset=utf-8,${encodeURIComponent(svg)}`;
 }
 
-function getBeatImageUrl(beat = {}) {
+function getBeatCoverSeed(beat = {}) {
   const genre = String(beat.genre || 'beats').toLowerCase();
-  const seed = `${beat.id || ''}-${beat.title || 'beat'}-${genre}`;
-  return coverGradientDataUrl(seed, 600, 360);
+  return `${beat.id || ''}-${beat.title || 'beat'}-${genre}`;
+}
+
+/** Локальный файл `public/images/beats/{id}.jpg` или градиент, если файла нет. */
+function getBeatCoverUrls(beat = {}) {
+  const seed = getBeatCoverSeed(beat);
+  const fallback = coverGradientDataUrl(seed, 600, 360);
+  const id = beat.id;
+  if (id == null || id === '' || Number.isNaN(Number(id))) {
+    return { primary: fallback, fallback: null };
+  }
+  return { primary: `/images/beats/${id}.jpg`, fallback };
+}
+
+/** Локальный файл `public/images/mentors/{id}.jpg` или градиент, если файла нет. */
+function getMentorCoverUrls(mentor = {}) {
+  const known = mentorPortfolioMeta[mentor.fullName];
+  const seed = known ? `mentor-${mentor.fullName}` : `mentor-${mentor.id || 'default'}`;
+  const fallback = coverGradientDataUrl(seed, 800, 500);
+  const id = mentor.id;
+  if (id == null || id === '' || Number.isNaN(Number(id))) {
+    return { primary: fallback, fallback: null };
+  }
+  return { primary: `/images/mentors/${id}.jpg`, fallback };
 }
 
 function getMentorPortfolio(mentor = {}) {
   const known = mentorPortfolioMeta[mentor.fullName];
-  const seed = known ? `mentor-${mentor.fullName}` : `mentor-${mentor.id || 'default'}`;
   const base = known || { ...defaultMentorPortfolio };
+  const { primary, fallback } = getMentorCoverUrls(mentor);
   return {
     ...base,
-    photo: coverGradientDataUrl(seed, 800, 500)
+    photo: primary,
+    photoFallback: fallback
   };
+}
+
+/**
+ * Картинка обложки: сначала свой файл с сервера, при 404 — запасной градиент.
+ * @param {{ primary: string, fallback: string | null }} urls
+ */
+function coverImgTag(className, urls, alt, loading) {
+  const { primary, fallback } = urls;
+  if (!fallback || primary === fallback) {
+    return `<img class="${className}" src="${escapeHtml(primary)}" alt="${escapeHtml(alt)}" loading="${loading}" />`;
+  }
+  return `<img class="${className}" src="${escapeHtml(primary)}" alt="${escapeHtml(alt)}" loading="${loading}" data-cover-fallback="${escapeHtml(fallback)}" onerror="this.onerror=null;if(this.dataset.coverFallback)this.src=this.dataset.coverFallback;" />`;
 }
 
 async function apiFetch(url, options = {}) {
@@ -266,9 +301,10 @@ function syncNav(pathname = location.pathname) { // функция для син
 
 function cardBeat(beat, withDetails = true, options = {}) { // функция для отображения карточки бита
   const imgLoading = options.imageLoading === 'eager' ? 'eager' : 'lazy';
+  const coverUrls = getBeatCoverUrls(beat);
   return `
     <article class="card">
-      <img class="card-cover" src="${escapeHtml(getBeatImageUrl(beat))}" alt="Обложка курса ${escapeHtml(beat.title)}" loading="${imgLoading}" />
+      ${coverImgTag('card-cover', coverUrls, `Обложка курса ${beat.title ?? ''}`, imgLoading)}
       <h3>${escapeHtml(beat.title)}</h3>
       <p class="muted">Жанр: ${escapeHtml(beat.genre)}</p>
       <p class="muted">Автор: ${escapeHtml(beat.authorName || 'неизвестно')}</p>
@@ -338,7 +374,7 @@ async function renderMentors() {
       <div class="grid">
         ${data.map((m) => `
           <article class="card">
-            <img class="card-cover" src="${escapeHtml(getMentorPortfolio(m).photo)}" alt="Фото наставника ${escapeHtml(m.fullName)}" loading="lazy" />
+            ${coverImgTag('card-cover', getMentorCoverUrls(m), `Фото наставника ${m.fullName ?? ''}`, 'lazy')}
             <h3>${escapeHtml(m.fullName)}</h3>
             <p>${escapeHtml(m.specialization)}</p>
             <p class="muted">${escapeHtml(m.bio)}</p>
