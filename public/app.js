@@ -8,17 +8,14 @@ const defaultMentorPortfolio = {
 };
 const mentorPortfolioMeta = {
   'Roman K.': {
-    photo: 'https://images.unsplash.com/photo-1516280440614-37939bbacd81?auto=format&fit=crop&w=800&q=80',
     achievements: ['12+ лет в индустрии', 'Саунд-продюсер независимых артистов', 'Автор 4 учебных программ по Trap/Drill'],
     socials: ['YouTube', 'SoundCloud']
   },
   'Alex M.': {
-    photo: 'https://images.unsplash.com/photo-1511379938547-c1f69419868d?auto=format&fit=crop&w=800&q=80',
     achievements: ['Сведение для 100+ треков', 'Работа с коммерческими релизами', 'Наставник по мастерингу с 2020'],
     socials: ['YouTube', 'Instagram']
   },
   'Vika P.': {
-    photo: 'https://images.unsplash.com/photo-1516280030429-27679b3dc9cf?auto=format&fit=crop&w=800&q=80',
     achievements: ['Эксперт Ableton Live', 'Куратор live-performance проектов', 'Проводит воркшопы по саунд-дизайну'],
     socials: ['Ableton', 'Telegram']
   }
@@ -72,21 +69,47 @@ function getAuthHeaders() { // функция для получения заго
   return state.token ? { Authorization: `Bearer ${state.token}` } : {};
 }
 
+/** Детерминированный хэш строки (без внешних запросов). */
+function hashStringToUint(str) {
+  let h = 2166136261;
+  const s = String(str);
+  for (let i = 0; i < s.length; i += 1) {
+    h ^= s.charCodeAt(i);
+    h = Math.imul(h, 16777619);
+  }
+  return h >>> 0;
+}
+
+/**
+ * Обложка без сторонних URL: Edge/Chrome с жёсткой защитой от трекинга часто режут picsum/unsplash.
+ * SVG data URL грузится как обычная картинка и не зависит от внешних доменов.
+ */
+function coverGradientDataUrl(seedKey, width, height) {
+  const h = hashStringToUint(seedKey);
+  const hue1 = h % 360;
+  const hue2 = (Math.imul(h, 7) + 53) % 360;
+  const sat1 = 55 + (h % 25);
+  const sat2 = 45 + ((h >>> 8) % 20);
+  const light1 = 38 + (h % 15);
+  const light2 = 28 + ((h >>> 16) % 12);
+  const svg = `<svg xmlns="http://www.w3.org/2000/svg" width="${width}" height="${height}" viewBox="0 0 ${width} ${height}"><defs><linearGradient id="g" x1="0%" y1="0%" x2="100%" y2="100%"><stop offset="0%" stop-color="hsl(${hue1},${sat1}%,${light1}%)"/><stop offset="100%" stop-color="hsl(${hue2},${sat2}%,${light2}%)"/></linearGradient></defs><rect width="100%" height="100%" fill="url(#g)"/></svg>`;
+  return `data:image/svg+xml;charset=utf-8,${encodeURIComponent(svg)}`;
+}
+
 function getBeatImageUrl(beat = {}) {
   const genre = String(beat.genre || 'beats').toLowerCase();
-  const seed = encodeURIComponent(`${beat.id || beat.title || 'beat'}-${genre}`);
-  return `https://picsum.photos/seed/${seed}/600/360`;
+  const seed = `${beat.id || ''}-${beat.title || 'beat'}-${genre}`;
+  return coverGradientDataUrl(seed, 600, 360);
 }
 
 function getMentorPortfolio(mentor = {}) {
   const known = mentorPortfolioMeta[mentor.fullName];
-  if (!known) {
-    return {
-      ...defaultMentorPortfolio,
-      photo: `https://picsum.photos/seed/mentor-${mentor.id || 'default'}/800/500`
-    };
-  }
-  return known;
+  const seed = known ? `mentor-${mentor.fullName}` : `mentor-${mentor.id || 'default'}`;
+  const base = known || { ...defaultMentorPortfolio };
+  return {
+    ...base,
+    photo: coverGradientDataUrl(seed, 800, 500)
+  };
 }
 
 async function apiFetch(url, options = {}) {
