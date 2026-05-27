@@ -5,7 +5,7 @@ SPA-приложение на JavaScript для обучения битмейк�
 ## Production ссылки
 
 - Frontend: `https://beatmaking-school-architecture-production.up.railway.app`
-- Backend API: `https://beatmaking-school-architecture-production.up.railway.app/api/home/summary`
+- Backend API (base): `https://beatmaking-school-architecture-production.up.railway.app/api`
 
 ## Технологии
 
@@ -95,17 +95,19 @@ JWT_SECRET=your_jwt_secret
 
 ## Скриншоты
 
-Добавьте 3-5 скриншотов итогового интерфейса в репозиторий, например в `docs/screenshots/`:
+### Главная
+![Главная](public/images/screenshots/home.png)
 
-- `home.png` - главная
-- `catalog.png` - каталог
-- `profile.png` - личный кабинет
-- `mentors.png` - наставники
-- `checkout.png` - оплата
+### Каталог
+![Каталог](public/images/screenshots/catalog.png)
 
-## Как поставить свои фото наставников
+### Личный кабинет
+![Личный кабинет](public/images/screenshots/profile.png)
 
-- Открой файл `public/app.js`
-- Найди объект `mentorPortfolioMeta`
-- Замени поле `photo` у нужного наставника на свою ссылку или путь (например `/images/mentors/my-photo.jpg`)
-- Если используешь локальные файлы, положи их в `public/images/mentors/`
+## Проверка перед сдачей
+
+- Регистрация нового пользователя работает без ошибок
+- Вход/выход очищает и восстанавливает состояние авторизации корректно
+- Создание курса в личном кабинете отображается в каталоге
+- Лайк и избранное обновляются и сохраняются
+- Невалидный маршрут открывает страницу 404

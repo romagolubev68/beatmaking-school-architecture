@@ -174,6 +174,7 @@ router.get('/by-ids/list', async (req, res) => {
 // 1.0.1. ОПЛАТА КУРСОВ (приватно)
 router.post('/checkout/process', authMiddleware, async (req, res) => {
     try {
+        // проверяем, что в запросе есть все нужные поля и они корректные
         await ensureCoursePurchasesTable();
         const userId = req.user.userId;
         const ids = Array.isArray(req.body?.ids) ? req.body.ids : [];
