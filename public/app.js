@@ -6,20 +6,6 @@ const defaultMentorPortfolio = {
   achievements: ['Публикации релизов', 'Индивидуальные разборы', 'Практика с проектами'],
   socials: []
 };
-const mentorPortfolioMeta = {
-  'Roman K.': {
-    achievements: ['12+ лет в индустрии', 'Саунд-продюсер независимых артистов', 'Автор 4 учебных программ по Trap/Drill'],
-    socials: ['YouTube', 'SoundCloud']
-  },
-  'Alex M.': {
-    achievements: ['Сведение для 100+ треков', 'Работа с коммерческими релизами', 'Наставник по мастерингу с 2020'],
-    socials: ['YouTube', 'Instagram']
-  },
-  'Vika P.': {
-    achievements: ['Эксперт Ableton Live', 'Куратор live-performance проектов', 'Проводит воркшопы по саунд-дизайну'],
-    socials: ['Ableton', 'Telegram']
-  }
-};
 const state = { 
   token: localStorage.getItem('token'), // токен авторизации
   user: null,
@@ -114,8 +100,7 @@ function getBeatCoverUrls(beat = {}) {
 
 /** Локальный файл `public/images/mentors/{id}.jpg` или градиент, если файла нет. */
 function getMentorCoverUrls(mentor = {}) {
-  const known = mentorPortfolioMeta[mentor.fullName];
-  const seed = known ? `mentor-${mentor.fullName}` : `mentor-${mentor.id || 'default'}`;
+  const seed = `mentor-${mentor.id || mentor.fullName || 'default'}`;
   const fallback = coverGradientDataUrl(seed, 800, 500);
   const id = mentor.id;
   if (id == null || id === '' || Number.isNaN(Number(id))) {
@@ -125,14 +110,63 @@ function getMentorCoverUrls(mentor = {}) {
 }
 
 function getMentorPortfolio(mentor = {}) {
-  const known = mentorPortfolioMeta[mentor.fullName];
-  const base = known || { ...defaultMentorPortfolio };
+  const achievementsFromApi = Array.isArray(mentor.achievements)
+    ? mentor.achievements.map((item) => String(item).trim()).filter(Boolean)
+    : [];
+  const socialsFromApi = Array.isArray(mentor.socials)
+    ? mentor.socials.map((item) => String(item).trim()).filter(Boolean)
+    : [];
+  const derivedAchievements = [mentor.specialization, mentor.bio]
+    .map((item) => String(item || '').trim())
+    .filter(Boolean);
+
+  let derivedSocial = '';
+  try {
+    const rawUrl = String(mentor.portfolioUrl || '').trim();
+    if (rawUrl) {
+      const host = new URL(rawUrl).hostname.replace(/^www\./, '');
+      derivedSocial = host ? host.split('.')[0] : '';
+    }
+  } catch (_) {}
+
+  const achievements = achievementsFromApi.length
+    ? achievementsFromApi
+    : (derivedAchievements.length ? derivedAchievements : [...defaultMentorPortfolio.achievements]);
+  const socials = socialsFromApi.length
+    ? socialsFromApi
+    : (derivedSocial ? [derivedSocial] : [...defaultMentorPortfolio.socials]);
   const { primary, fallback } = getMentorCoverUrls(mentor);
   return {
-    ...base,
+    achievements,
+    socials,
     photo: primary,
     photoFallback: fallback
   };
+}
+
+function validateCardExpiry(expiry) {
+  if (!/^\d{2}\/\d{2}$/.test(expiry)) {
+    return { ok: false, message: 'Введите срок действия в формате MM/YY' };
+  }
+
+  const month = Number(expiry.slice(0, 2));
+  const year = Number(expiry.slice(3, 5));
+  if (!Number.isInteger(month) || month < 1 || month > 12) {
+    return { ok: false, message: 'Некорректный месяц срока действия карты' };
+  }
+
+  const now = new Date();
+  const currentYear = now.getFullYear() % 100;
+  const currentMonth = now.getMonth() + 1;
+  if (year < currentYear || (year === currentYear && month < currentMonth)) {
+    return { ok: false, message: 'Срок действия карты истек' };
+  }
+
+  if (year > currentYear + 20) {
+    return { ok: false, message: 'Некорректный год срока действия карты' };
+  }
+
+  return { ok: true };
 }
 
 /**
@@ -1023,8 +1057,9 @@ function attachHandlers(routeKey) {
         await render('/checkout', true);
         return;
       }
-      if (!/^\d{2}\/\d{2}$/.test(expiry)) {
-        state.checkoutNotice = { type: 'error', text: 'Введите срок действия в формате MM/YY' };
+      const expiryValidation = validateCardExpiry(expiry);
+      if (!expiryValidation.ok) {
+        state.checkoutNotice = { type: 'error', text: expiryValidation.message };
         await render('/checkout', true);
         return;
       }
